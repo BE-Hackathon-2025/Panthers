@@ -652,7 +652,7 @@ Password: Test123!
 - [x] Team Slack channel
 - [x] Communication established with mentor
 - [x] Repo created from template
-- [ ] Flight Deck / Hangar registration (placeholder)
+- [x] Flight Deck / Hangar registration (placeholder)
 
 ### Project Checklist
 - [x] Presentation complete and linked (placeholder)
