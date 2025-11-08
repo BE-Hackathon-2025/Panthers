@@ -9,9 +9,7 @@ primary_region = 'iad'
 [build]
   dockerfile = 'Dockerfile'
 
-[env]
-  QDRANT_HOST = 'qdrant.internal'
-  QDRANT_PORT = '6333'
+# Qdrant configuration is set via secrets (QDRANT_URL, QDRANT_API_KEY)
 
 [http_service]
   internal_port = 8000

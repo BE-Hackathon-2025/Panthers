@@ -24,10 +24,19 @@ class QdrantService:
     
     def __init__(self):
         """Initialize Qdrant client and ensure collection exists."""
-        self.client = QdrantClientBase(
-            host=settings.qdrant_host,
-            port=settings.qdrant_port,
-        )
+        # Support both local and Qdrant Cloud
+        if settings.qdrant_url and settings.qdrant_api_key:
+            # Qdrant Cloud with full URL and API key
+            self.client = QdrantClientBase(
+                url=settings.qdrant_url,
+                api_key=settings.qdrant_api_key,
+            )
+        else:
+            # Local Qdrant (for development)
+            self.client = QdrantClientBase(
+                host=settings.qdrant_host,
+                port=settings.qdrant_port,
+            )
         self.collection_name = settings.qdrant_collection
         self._ensure_collection()
     

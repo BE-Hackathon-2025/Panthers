@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     # Qdrant
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
+    qdrant_url: Optional[str] = None  # Full URL for Qdrant Cloud
+    qdrant_api_key: Optional[str] = None  # API key for Qdrant Cloud
     qdrant_collection: str = "swap_users"
     
     # Embeddings (using smaller, faster model)
