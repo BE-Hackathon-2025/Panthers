@@ -126,7 +126,3 @@ Panthers
 * Otito Udedibor
 * Olaoluwa James-Owolabi
 * Emmanuella Turkson
-
----
-
-If you want, I can fill in hosting links, demo credentials, or wiring to external APIs — tell me which values you have and I will insert them.
