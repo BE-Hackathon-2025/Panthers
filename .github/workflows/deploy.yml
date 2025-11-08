@@ -1,28 +1,7 @@
 name: CI/CD Pipeline
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      # Only trigger on backend code changes
-      - 'wap-backend/app/**'
-      - 'wap-backend/tests/**'
-      - 'wap-backend/requirements.txt'
-      - 'wap-backend/Dockerfile'
-      - 'wap-backend/fly.toml'
-      - '.github/workflows/deploy.yml'
-  pull_request:
-    branches:
-      - main
-    paths:
-      # Only run tests when backend code changes
-      - 'wap-backend/app/**'
-      - 'wap-backend/tests/**'
-      - 'wap-backend/requirements.txt'
-      - 'wap-backend/Dockerfile'
-      - 'wap-backend/fly.toml'
-      - '.github/workflows/deploy.yml'
+  workflow_dispatch:  # Only run manually - automatic triggers disabled
 
 defaults:
   run:
