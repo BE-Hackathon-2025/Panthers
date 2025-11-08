@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "663805210025",
+    "project_id": "besmart2025-d6c3f",
+    "storage_bucket": "besmart2025-d6c3f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:663805210025:android:4fc1e228e04e13acbfe8b8",
+        "android_client_info": {
+          "package_name": "com.example.besmart_2025"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBbTNt5--WmipSJ0J4TxS2_4-ZHYTCedis"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
