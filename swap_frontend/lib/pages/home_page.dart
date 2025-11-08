@@ -1,4 +1,3 @@
-// lib/pages/home_page.dart
 import 'package:flutter/material.dart';
 import 'landing_page.dart';
 import 'dart:async'; // for TimeoutException
@@ -6,6 +5,7 @@ import '../services/search_service.dart';
 // import 'post_skill_page.dart'; // no longer used directly here
 import '../services/auth_service.dart';
 import '../widgets/app_sidebar.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 // Removed debug-only imports (seed/upsert/test helpers)
 
 class HomePage extends StatefulWidget {
@@ -51,60 +51,31 @@ class _HomePageState extends State<HomePage> {
       _searchResults = [];
     });
     try {
-      // Primary attempt: modest limit to improve latency
+      // Attempt search with reasonable timeout
       final res = await _searchService.search(
         q,
         mode: 'offers',
         limit: 10,
-        timeout: const Duration(seconds: 12),
+        timeout: const Duration(seconds: 10),
       );
       if (mounted)
         setState(() {
           _searchResults = res;
           _currentQuery = q;
         });
-    } on TimeoutException {
-      // Quick retry with smaller limit and shorter timeout
-      try {
-        final retry = await _searchService.search(
-          q,
-          mode: 'offers',
-          limit: 8,
-          timeout: const Duration(seconds: 8),
-        );
-        if (mounted)
-          setState(() {
-            _searchResults = retry;
-            _currentQuery = q;
-          });
-      } on TimeoutException {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Search timed out. The server may be busy—please try again.',
-              ),
-            ),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Search failed: $e')));
-        }
-      }
     } catch (e) {
+      // Silently handle errors - just log them
+      debugPrint('Search error for "$q": $e');
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Search error: $e')));
+        setState(() {
+          _searchResults = [];
+          _currentQuery = q;
+        });
       }
     } finally {
       if (mounted) setState(() => _loadingSearch = false);
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -231,66 +202,8 @@ class _DiscoverPane extends StatefulWidget {
 
 class _DiscoverPaneState extends State<_DiscoverPane> {
   late final TextEditingController _searchCtrl;
-
-  final List<_Skill> skills = [
-    _Skill(
-      title: 'Piano Fundamentals',
-      category: 'music',
-      description:
-          'Learn piano basics with proper technique from day one. We\'ll cover finger positioning, scales, and simple songs.',
-      durationHours: 4,
-      mode: 'Both',
-      rating: 4.4,
-      tags: ['piano', 'music theory', 'sheet music', 'beginner'],
-      verified: true,
-    ),
-    _Skill(
-      title: 'Technical Writing for Developers',
-      category: 'writing',
-      description:
-          'Turn technical knowledge into clear, engaging documentation. I\'ll show you how to explain APIs and systems.',
-      durationHours: 3,
-      mode: 'Remote',
-      rating: 4.7,
-      tags: ['technical writing', 'documentation', 'api', 'clarity'],
-      verified: true,
-    ),
-    _Skill(
-      title: 'React Hooks Masterclass',
-      category: 'coding',
-      description:
-          'Master modern React development with hooks! useState, useEffect, useMemo, and custom hooks with patterns.',
-      durationHours: 4,
-      mode: 'Remote',
-      rating: 4.9,
-      tags: ['react', 'javascript', 'hooks', 'frontend'],
-      verified: false,
-    ),
-    _Skill(
-      title: 'Spanish Conversation for Beginners',
-      category: 'language',
-      description:
-          'Practice essential phrases and build confidence in real conversation scenarios.',
-      durationHours: 2,
-      mode: 'Both',
-      rating: 4.6,
-      tags: ['spanish', 'conversation', 'travel'],
-      verified: true,
-      isNew: true,
-    ),
-    _Skill(
-      title: 'Logo Design in Figma',
-      category: 'design',
-      description:
-          'Learn to create professional logos in Figma with a simple, repeatable process.',
-      durationHours: 3,
-      mode: 'Remote',
-      rating: 4.8,
-      tags: ['figma', 'logo', 'branding', 'vector'],
-      verified: true,
-      isNew: true,
-    ),
-  ];
+  List<_Skill> skills = [];
+  bool _loadingSkills = true;
 
   final List<String> categories = const [
     'All Skills',
@@ -305,6 +218,42 @@ class _DiscoverPaneState extends State<_DiscoverPane> {
   void initState() {
     super.initState();
     _searchCtrl = TextEditingController();
+    _loadSkillsFromFirestore();
+  }
+
+  Future<void> _loadSkillsFromFirestore() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('skills')
+          .get();
+
+      final loadedSkills = snapshot.docs.map((doc) {
+        final data = doc.data();
+        return _Skill(
+          title: data['title'] ?? '',
+          category: data['category'] ?? 'other',
+          description: data['description'] ?? '',
+          durationHours: data['estimatedHours'] ?? 1,
+          mode: data['deliveryFormat'] ?? 'Remote',
+          rating: (data['rating'] ?? 4.5).toDouble(),
+          tags: List<String>.from(data['tags'] ?? []),
+          verified: data['verified'] ?? false,
+          isNew: data['isNew'] ?? false,
+        );
+      }).toList();
+
+      if (mounted) {
+        setState(() {
+          skills = loadedSkills;
+          _loadingSkills = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading skills: $e');
+      if (mounted) {
+        setState(() => _loadingSkills = false);
+      }
+    }
   }
 
   @override
@@ -588,25 +537,63 @@ class _DiscoverPaneState extends State<_DiscoverPane> {
             padding: const EdgeInsets.symmetric(
               horizontal: 24,
             ).copyWith(bottom: 24),
-            sliver: SliverLayoutBuilder(
-              builder: (context, constraints) {
-                final maxW = constraints.crossAxisExtent;
-                // nice responsive column count
-                final crossAxisCount = maxW >= 1200 ? 3 : (maxW >= 780 ? 2 : 1);
+            sliver: _loadingSkills
+                ? const SliverFillRemaining(
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                : skills.isEmpty
+                ? const SliverFillRemaining(
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.search_off,
+                            size: 64,
+                            color: HomePage.textMuted,
+                          ),
+                          SizedBox(height: 16),
+                          Text(
+                            'No skills posted yet',
+                            style: TextStyle(
+                              color: HomePage.textMuted,
+                              fontSize: 18,
+                            ),
+                          ),
+                          SizedBox(height: 8),
+                          Text(
+                            'Be the first to share your skills!',
+                            style: TextStyle(
+                              color: HomePage.textMuted,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : SliverLayoutBuilder(
+                    builder: (context, constraints) {
+                      final maxW = constraints.crossAxisExtent;
+                      // nice responsive column count
+                      final crossAxisCount = maxW >= 1200
+                          ? 3
+                          : (maxW >= 780 ? 2 : 1);
 
-                return SliverGrid.builder(
-                  itemCount: skills.length,
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: crossAxisCount,
-                    mainAxisSpacing: 18,
-                    crossAxisSpacing: 18,
-                    // increase card height slightly to avoid occasional overflow
-                    mainAxisExtent: 260,
+                      return SliverGrid.builder(
+                        itemCount: skills.length,
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: crossAxisCount,
+                          mainAxisSpacing: 18,
+                          crossAxisSpacing: 18,
+                          // increase card height slightly to avoid occasional overflow
+                          mainAxisExtent: 260,
+                        ),
+                        itemBuilder: (context, i) =>
+                            _SkillCard(skill: skills[i]),
+                      );
+                    },
                   ),
-                  itemBuilder: (context, i) => _SkillCard(skill: skills[i]),
-                );
-              },
-            ),
           ),
         ],
       ),
