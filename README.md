@@ -156,86 +156,66 @@ Built with FastAPI and machine learning for smart skill matching.
 
 ## Architecture
 
-```
-                    ┌──────────────────────────────────────┐
-                    │       Flutter Web Application        │
-                    │    (User Interface - Web/Mobile)     │
-                    └─────────────────┬────────────────────┘
-                                      │
-                                      │ HTTPS/REST API
-                                      │
-                    ┌─────────────────▼────────────────────┐
-                    │      FastAPI Backend Server          │
-                    │         (Fly.io Cloud)               │
-                    │                                      │
-                    │  ┌────────────────────────────────┐  │
-                    │  │  Profile Management Router     │  │
-                    │  ├────────────────────────────────┤  │
-                    │  │  Semantic Search Router        │  │
-                    │  ├────────────────────────────────┤  │
-                    │  │  Reciprocal Matching Router    │  │
-                    │  ├────────────────────────────────┤  │
-                    │  │  ML Embeddings Service         │  │
-                    │  │  (BERT sentence-transformers)  │  │
-                    │  └────────────────────────────────┘  │
-                    └──────┬──────────┬──────────┬─────────────┘
-                           │          │          │
-                           │          │          │
-            ┌──────────────▼───────┐  │   ┌──────▼──────────────────┐
-            │  Firebase Firestore  │  │   │   Qdrant Cloud          │
-            │  (Profile Storage)   │  │   │   (Vector Database)     │
-            │                      │  │   │                         │
-            │  • User profiles     │  │   │  • 384-dim vectors      │
-            │  • Skills data       │  │   │  • HNSW indexing        │
-            │  • Metadata          │  │   │  • Cosine similarity    │
-            └──────────────────────┘  │   └─────────────────────────┘
-                                      │
-                               ┌──────▼──────┐
-                               │    Redis    │
-                               │  (Cache)    │
-                               │             │
-                               │  • 5ms hits │
-                               │  • 1hr TTL  │
-                               └─────────────┘
+```mermaid
+flowchart TB
+  UI[Flutter Web UI] --> API[FastAPI Server]
+  API --> PM[Profile Management]
+  API --> SS[Semantic Search]
+  API --> RM[Reciprocal Matching]
+  API --> ML[ML Embeddings]
+  ML --> QD[Qdrant]
+  PM --> FB[Firebase Firestore]
+  SS --> QD
+  SS --> FB
+  RM --> QD
+  RM --> FB
+  API --> RD[Redis Cache]
+  
+  classDef dark fill:#0F0F11,stroke:#8B5CF6,stroke-width:2px,color:#FFFFFF;
+  class UI,API,PM,SS,RM,ML,FB,QD,RD dark;
 ```
 
 ### Data Flow
 
-**Profile Creation:**
-```
-User Input → FastAPI Validation → Firebase (store profile)
-                                 ↓
-                          ML Model (encode skills)
-                                 ↓
-                          Qdrant (store vectors)
+```mermaid
+flowchart LR
+  UI["User Input"] --> API["FastAPI Validation"]
+  API --> FB["Firebase (store profile)"]
+  API --> ML["ML Model (encode skills)"]
+  ML --> QD["Qdrant (store vectors)"]
+
+  classDef dark fill:#0F0F11,stroke:#8B5CF6,stroke-width:2px,color:#FFFFFF;
+  class UI,API,FB,ML,QD dark;
 ```
 
 **Semantic Search:**
-```
-Query "guitar lessons" → ML Model (text → 384-dim vector)
-                              ↓
-                       Qdrant (vector similarity search)
-                              ↓
-                       Firebase (fetch full profiles)
-                              ↓
-                       Ranked Results (by cosine similarity)
+
+```mermaid
+flowchart LR
+  Query["User Query (e.g. 'guitar lessons')"] --> Encode["ML Model (encode -> 384-dim)"]
+  Encode --> QD["Qdrant (vector search)"]
+  QD --> FB["Firebase (fetch full profiles)"]
+  FB --> Results["Ranked Results (by cosine similarity)"]
+
+  classDef dark fill:#0F0F11,stroke:#8B5CF6,stroke-width:2px,color:#FFFFFF;
+  class Query,Encode,QD,FB,Results dark;
 ```
 
 **Reciprocal Matching:**
-```
-My Skills: "Python"  }
-My Needs: "Guitar"   } → ML Model → 2 vectors
-                              ↓
-                    ┌─────────┴──────────┐
-                    ▼                    ▼
-           Search their offers    Search my offers
-           vs my needs           vs their needs
-                    │                    │
-                    └─────────┬──────────┘
-                              ▼
-                    Harmonic Mean Score
-                              ↓
-                    Top Mutual Matches
+
+```mermaid
+flowchart LR
+  A[My Skills] --> EncodeA[Encode A]
+  B[My Needs] --> EncodeB[Encode B]
+  EncodeA --> SearchA[Search Their Offers]
+  EncodeB --> SearchB[Search My Offers]
+  SearchA --> ScoreA[Score A]
+  SearchB --> ScoreB[Score B]
+  ScoreA & ScoreB --> Harmonic[Harmonic Mean]
+  Harmonic --> Top[Top Mutual Matches]
+  
+  classDef dark fill:#0F0F11,stroke:#8B5CF6,stroke-width:2px,color:#FFFFFF;
+  class A,B,EncodeA,EncodeB,SearchA,SearchB,ScoreA,ScoreB,Harmonic,Top dark;
 ```
 
 ### Performance
@@ -247,10 +227,6 @@ My Needs: "Guitar"   } → ML Model → 2 vectors
 | Profile Create | - | ~150ms | FastAPI → Firebase → ML → Qdrant |
 | Profile Read | - | ~20ms | FastAPI → Firebase |
 | Health Check | - | ~1ms | FastAPI only |
-
-*Tested on: Fly.io (1GB RAM, 1 CPU), 1000+ profiles*
-
-**Note:** Redis caching speeds up repeat queries by ~16x. Currently only running in local dev (docker-compose), not deployed to production yet.
 
 ## API Documentation
 
@@ -716,7 +692,7 @@ Password: Test123!
 - [x] Flight Deck / Hangar registration (placeholder)
 
 ### Project Checklist
-- [x] Presentation complete and linked (placeholder)
+- [x] Presentation complete and linked  (placeholder)
 - [x] Code merged to main branch
 
 ### School Name
