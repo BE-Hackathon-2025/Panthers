@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'home_page.dart';
+import '../services/profile_service.dart';
 
 class ProfileSetupFlow extends StatefulWidget {
   const ProfileSetupFlow({super.key});
@@ -28,8 +29,6 @@ class _ProfileSetupFlowState extends State<ProfileSetupFlow> {
   static const Color chipBorder = Color(0xFF2A2F3A);
   static const double kMaxContentWidth = 880;
 
-  // simple model for entries
-
   /* --------------------------------- Form --------------------------------- */
   final _formKey = GlobalKey<FormState>();
   final _bio = TextEditingController();
@@ -39,7 +38,10 @@ class _ProfileSetupFlowState extends State<ProfileSetupFlow> {
 
   String? _timezone;
   int _step = 0;
-  File? _avatar;
+
+  // Avatar sources
+  File? _avatar; // newly picked image (local)
+  String? _existingPhotoUrl; // existing photo from Firestore/Auth
 
   // Step 2: Skills to Offer (structured rows)
   final List<SkillEntry> _offer = [];
@@ -102,16 +104,53 @@ class _ProfileSetupFlowState extends State<ProfileSetupFlow> {
 
       if (doc.exists) {
         final data = doc.data()!;
-        setState(() {
-          // Pre-fill form with existing data
-          if (data['fullName'] != null) _fullName.text = data['fullName'];
-          if (data['displayName'] != null) _fullName.text = data['displayName'];
-          if (data['username'] != null) _username.text = data['username'];
-          if (data['bio'] != null) _bio.text = data['bio'];
-          if (data['city'] != null) _city.text = data['city'];
-          if (data['timezone'] != null) _timezone = data['timezone'];
+        // Pre-fill form with existing data
+        final fullNameFirestore = (data['fullName'] ?? data['displayName']);
+        if (fullNameFirestore != null) _fullName.text = fullNameFirestore;
+        if (data['username'] != null) _username.text = data['username'];
+        if (data['bio'] != null) _bio.text = data['bio'];
+        if (data['city'] != null) _city.text = data['city'];
+        if (data['timezone'] != null) _timezone = data['timezone'];
+        if (data['photoUrl'] != null) _existingPhotoUrl = data['photoUrl'];
 
-          // Set preferences if they exist
+        // Pre-fill skills arrays so submitting won’t wipe them
+        final existingOffer =
+            (data['skillsToOffer'] as List?)
+                ?.whereType<Map>()
+                .map(
+                  (e) => SkillEntry(
+                    name: (e['name'] ?? '').toString(),
+                    category: (e['category'] ?? '').toString(),
+                    level: (e['level'] ?? '').toString(),
+                  ),
+                )
+                .where((e) => e.name.isNotEmpty)
+                .toList() ??
+            [];
+
+        final existingNeed =
+            (data['servicesNeeded'] as List?)
+                ?.whereType<Map>()
+                .map(
+                  (e) => SkillEntry(
+                    name: (e['name'] ?? '').toString(),
+                    category: (e['category'] ?? '').toString(),
+                    level: (e['level'] ?? '').toString(),
+                  ),
+                )
+                .where((e) => e.name.isNotEmpty)
+                .toList() ??
+            [];
+
+        setState(() {
+          _offer
+            ..clear()
+            ..addAll(existingOffer);
+          _need
+            ..clear()
+            ..addAll(existingNeed);
+
+          // Preferences if present
           if (data['dmOpen'] != null) _dmOpen = data['dmOpen'];
           if (data['emailUpdates'] != null)
             _emailUpdates = data['emailUpdates'];
@@ -119,17 +158,19 @@ class _ProfileSetupFlowState extends State<ProfileSetupFlow> {
         });
       }
 
-      // Also check Firebase Auth data
+      // Also check Firebase Auth data for fallbacks
       if (user.displayName != null && _fullName.text.isEmpty) {
         _fullName.text = user.displayName!;
       }
+      if (_existingPhotoUrl == null && user.photoURL != null) {
+        _existingPhotoUrl = user.photoURL;
+      }
       if (user.email != null && _username.text.isEmpty) {
-        // Create a username suggestion from email
         final emailName = user.email!.split('@')[0];
         _username.text = emailName.replaceAll(RegExp(r'[^a-zA-Z0-9_\.]'), '_');
       }
     } catch (e) {
-      print('Error loading existing user data: $e');
+      debugPrint('Error loading existing user data: $e');
     }
   }
 
@@ -160,39 +201,32 @@ class _ProfileSetupFlowState extends State<ProfileSetupFlow> {
 
   Future<void> _submit() async {
     try {
-      print('Starting profile submission...');
-
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) {
-        print('Error: No user is currently signed in');
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Error: No user is signed in')),
         );
         return;
       }
-      print('Current user ID: ${user.uid}');
 
-      // Upload avatar if selected
+      // Upload avatar if a new one was picked
       String? photoUrl;
       if (_avatar != null) {
-        print('Uploading avatar...');
         try {
           final ref = FirebaseStorage.instance
               .ref()
               .child('user_avatars')
               .child('${user.uid}.jpg');
-
           await ref.putFile(_avatar!);
           photoUrl = await ref.getDownloadURL();
-          print('Avatar uploaded successfully. URL: $photoUrl');
         } catch (e) {
-          print('Error uploading avatar: $e');
-          // Continue with profile update even if avatar upload fails
+          debugPrint('Error uploading avatar: $e');
         }
       }
 
-      print('Preparing data for Firestore update...');
-      final userData = {
+      // Build payload. Because _offer/_need are prefilled from Firestore,
+      // they will only be empty if the user intentionally removed them.
+      final userData = <String, dynamic>{
         'fullName': _fullName.text.trim(),
         'username': _username.text.trim(),
         'bio': _bio.text.trim(),
@@ -211,46 +245,56 @@ class _ProfileSetupFlowState extends State<ProfileSetupFlow> {
         'dmOpen': _dmOpen,
         'emailUpdates': _emailUpdates,
         'showCity': _showCity,
-        if (photoUrl != null) 'photoUrl': photoUrl,
+        if (photoUrl != null) 'photoUrl': photoUrl, // keep existing if null
       };
-      print('Data prepared: $userData');
 
-      // Update profile in Firestore
-      print('Updating Firestore...');
       await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .set(userData, SetOptions(merge: true));
-      print('Firestore update successful');
 
-      // Update display name in Firebase Auth
       if (_fullName.text.isNotEmpty) {
-        print('Updating display name...');
         await user.updateDisplayName(_fullName.text.trim());
-        print('Display name updated');
       }
-
-      // Update photo URL in Firebase Auth
       if (photoUrl != null) {
-        print('Updating photo URL...');
         await user.updatePhotoURL(photoUrl);
-        print('Photo URL updated');
       }
 
-      print('Profile setup completed successfully!');
+      // Convert your structured skills to simple strings for the backend.
+      String _skillsListToText(List<SkillEntry> list) {
+        // Keep it readable for embeddings: "React (Advanced), SQL (Intermediate)"
+        return list
+            .map((e) => e.level.isNotEmpty ? '${e.name} (${e.level})' : e.name)
+            .join(', ');
+      }
+
+      final offersText = _skillsListToText(_offer);
+      final needsText = _skillsListToText(_need);
+
+      await ProfileService().upsertProfile(
+        uid: user.uid,
+        email: user.email ?? '',
+        displayName: _fullName.text.trim().isNotEmpty
+            ? _fullName.text.trim()
+            : (_username.text.trim().isNotEmpty
+                  ? _username.text.trim()
+                  : (user.email ?? '')),
+        skillsToOffer: offersText,
+        servicesNeeded: needsText,
+        bio: _bio.text.trim(),
+        city: _city.text.trim(),
+      );
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Profile updated successfully!')),
       );
-
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const HomePage()),
       );
     } catch (e, stackTrace) {
-      print('Error in _submit: $e');
-      print('Stack trace: $stackTrace');
+      debugPrint('Error in _submit: $e\n$stackTrace');
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -393,6 +437,7 @@ class _ProfileSetupFlowState extends State<ProfileSetupFlow> {
                                 onTimezoneChanged: (v) =>
                                     setState(() => _timezone = v),
                                 avatar: _avatar,
+                                existingPhotoUrl: _existingPhotoUrl,
                                 onPickAvatar: _pickAvatar,
                               ),
                               1 => _StepSkillsForm(
@@ -559,7 +604,11 @@ class _StepProfile extends StatelessWidget {
   final String? timezone;
   final List<String> timezones;
   final void Function(String?) onTimezoneChanged;
-  final File? avatar;
+
+  // Avatar sources
+  final File? avatar; // newly picked
+  final String? existingPhotoUrl; // existing from Firestore/Auth
+
   final VoidCallback onPickAvatar;
 
   const _StepProfile({
@@ -573,11 +622,20 @@ class _StepProfile extends StatelessWidget {
     required this.timezones,
     required this.onTimezoneChanged,
     required this.avatar,
+    required this.existingPhotoUrl,
     required this.onPickAvatar,
   });
 
   @override
   Widget build(BuildContext context) {
+    // decide which image to preview
+    ImageProvider? previewProvider;
+    if (avatar != null) {
+      previewProvider = FileImage(avatar!);
+    } else if (existingPhotoUrl != null && existingPhotoUrl!.isNotEmpty) {
+      previewProvider = NetworkImage(existingPhotoUrl!);
+    }
+
     return Form(
       key: formKey,
       child: Column(
@@ -591,7 +649,7 @@ class _StepProfile extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // Avatar with purple gradient ring
+          // Avatar with purple gradient ring (supports existing + new preview)
           Center(
             child: InkWell(
               onTap: onPickAvatar,
@@ -611,10 +669,8 @@ class _StepProfile extends StatelessWidget {
                     child: CircleAvatar(
                       radius: 44,
                       backgroundColor: _ProfileSetupFlowState.surfaceAlt,
-                      backgroundImage: avatar != null
-                          ? FileImage(avatar!)
-                          : null,
-                      child: avatar == null
+                      foregroundImage: previewProvider,
+                      child: previewProvider == null
                           ? const Text(
                               'U',
                               style: TextStyle(

@@ -10,7 +10,7 @@ const Color accentPurple = Color(0xFF8B5CF6);
 const Color textColor = Colors.white;
 
 class PostSkillPage extends StatefulWidget {
-  const PostSkillPage({Key? key}) : super(key: key);
+  const PostSkillPage({super.key});
 
   @override
   State<PostSkillPage> createState() => _PostSkillPageState();
@@ -273,12 +273,12 @@ class _PostSkillPageState extends State<PostSkillPage> {
                                                       : null,
                                                   style: ButtonStyle(
                                                     backgroundColor:
-                                                        MaterialStateProperty.resolveWith<
+                                                        WidgetStateProperty.resolveWith<
                                                           Color?
                                                         >(
                                                           (states) =>
                                                               states.contains(
-                                                                MaterialState
+                                                                WidgetState
                                                                     .disabled,
                                                               )
                                                               ? accentPurple
@@ -288,25 +288,25 @@ class _PostSkillPageState extends State<PostSkillPage> {
                                                               : accentPurple,
                                                         ),
                                                     foregroundColor:
-                                                        MaterialStateProperty.resolveWith<
+                                                        WidgetStateProperty.resolveWith<
                                                           Color?
                                                         >(
                                                           (states) =>
                                                               states.contains(
-                                                                MaterialState
+                                                                WidgetState
                                                                     .disabled,
                                                               )
                                                               ? Colors.white70
                                                               : Colors.white,
                                                         ),
                                                     padding:
-                                                        MaterialStateProperty.all(
+                                                        WidgetStateProperty.all(
                                                           const EdgeInsets.symmetric(
                                                             horizontal: 26,
                                                             vertical: 14,
                                                           ),
                                                         ),
-                                                    shape: MaterialStateProperty.all(
+                                                    shape: WidgetStateProperty.all(
                                                       RoundedRectangleBorder(
                                                         borderRadius:
                                                             BorderRadius.circular(
@@ -437,35 +437,35 @@ class _PostSkillPageState extends State<PostSkillPage> {
                                               : null,
                                           style: ButtonStyle(
                                             backgroundColor:
-                                                MaterialStateProperty.resolveWith<
+                                                WidgetStateProperty.resolveWith<
                                                   Color?
                                                 >(
                                                   (states) =>
                                                       states.contains(
-                                                        MaterialState.disabled,
+                                                        WidgetState.disabled,
                                                       )
                                                       ? accentPurple
                                                             .withOpacity(0.45)
                                                       : accentPurple,
                                                 ),
                                             foregroundColor:
-                                                MaterialStateProperty.resolveWith<
+                                                WidgetStateProperty.resolveWith<
                                                   Color?
                                                 >(
                                                   (states) =>
                                                       states.contains(
-                                                        MaterialState.disabled,
+                                                        WidgetState.disabled,
                                                       )
                                                       ? Colors.white70
                                                       : Colors.white,
                                                 ),
-                                            padding: MaterialStateProperty.all(
+                                            padding: WidgetStateProperty.all(
                                               const EdgeInsets.symmetric(
                                                 horizontal: 26,
                                                 vertical: 14,
                                               ),
                                             ),
-                                            shape: MaterialStateProperty.all(
+                                            shape: WidgetStateProperty.all(
                                               RoundedRectangleBorder(
                                                 borderRadius:
                                                     BorderRadius.circular(12),
@@ -665,9 +665,9 @@ class _PostSkillPageState extends State<PostSkillPage> {
               onPressed: _addTag,
               icon: const Icon(Icons.add, color: Colors.white),
               style: ButtonStyle(
-                backgroundColor: MaterialStateProperty.all(accentPurple),
-                padding: MaterialStateProperty.all(const EdgeInsets.all(12)),
-                shape: MaterialStateProperty.all(
+                backgroundColor: WidgetStateProperty.all(accentPurple),
+                padding: WidgetStateProperty.all(const EdgeInsets.all(12)),
+                shape: WidgetStateProperty.all(
                   RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -711,9 +711,9 @@ class _PostSkillPageState extends State<PostSkillPage> {
               onPressed: _addDeliverable,
               icon: const Icon(Icons.add, color: Colors.white),
               style: ButtonStyle(
-                backgroundColor: MaterialStateProperty.all(accentPurple),
-                padding: MaterialStateProperty.all(const EdgeInsets.all(12)),
-                shape: MaterialStateProperty.all(
+                backgroundColor: WidgetStateProperty.all(accentPurple),
+                padding: WidgetStateProperty.all(const EdgeInsets.all(12)),
+                shape: WidgetStateProperty.all(
                   RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -808,12 +808,12 @@ class _TopBarNoNotifications extends StatelessWidget {
 // ------------------ Reusable DropdownField ------------------
 class DropdownField<T> extends StatelessWidget {
   const DropdownField({
-    Key? key,
+    super.key,
     required this.value,
     required this.hint,
     required this.items,
     required this.onChanged,
-  }) : super(key: key);
+  });
 
   final T? value;
   final String hint;
@@ -856,8 +856,7 @@ class DropdownField<T> extends StatelessWidget {
 
 // ------------------ Sidebar Navigation (aligned with HomePage) ------------------
 class SidebarNav extends StatelessWidget {
-  const SidebarNav({Key? key, this.activeLabel, this.badgeRequests})
-    : super(key: key);
+  const SidebarNav({super.key, this.activeLabel, this.badgeRequests});
 
   final String? activeLabel;
   final String? badgeRequests;
@@ -1036,7 +1035,7 @@ class SidebarNav extends StatelessWidget {
 }
 
 class TopBarNoNotifications extends StatelessWidget {
-  const TopBarNoNotifications({Key? key}) : super(key: key);
+  const TopBarNoNotifications({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -1056,11 +1055,11 @@ class TopBarNoNotifications extends StatelessWidget {
 // ------------------ Generic section card widget ------------------
 class SectionCard extends StatelessWidget {
   const SectionCard({
-    Key? key,
+    super.key,
     required this.title,
     required this.child,
     this.leading,
-  }) : super(key: key);
+  });
 
   final String title;
   final Widget child;
@@ -1102,7 +1101,7 @@ class SectionCard extends StatelessWidget {
 
 // ------------------ Pro Tips Panel ------------------
 class ProTipsPanel extends StatelessWidget {
-  const ProTipsPanel({Key? key}) : super(key: key);
+  const ProTipsPanel({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -1156,13 +1155,13 @@ class ProTipsPanel extends StatelessWidget {
 // ------------------ Preview Card ------------------
 class PreviewCard extends StatelessWidget {
   const PreviewCard({
-    Key? key,
+    super.key,
     required this.title,
     required this.description,
     required this.category,
     required this.hours,
     required this.mode,
-  }) : super(key: key);
+  });
 
   final String title;
   final String description;

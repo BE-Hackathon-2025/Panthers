@@ -1,5 +1,6 @@
 // lib/pages/signup_page.dart
 import 'package:besmart_2025/pages/landing_page.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
 import '../services/auth_service.dart';
@@ -258,12 +259,13 @@ class _SignUpPageState extends State<SignUpPage> {
         ],
       ),
       padding: const EdgeInsets.all(32),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+      child: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             const Text(
               r"Welcome to $wap",
               textAlign: TextAlign.center,
@@ -436,7 +438,8 @@ class _SignUpPageState extends State<SignUpPage> {
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
-          ],
+            ],
+          ),
         ),
       ),
     );

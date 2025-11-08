@@ -1,17 +1,22 @@
 // lib/pages/home_page.dart
 import 'package:flutter/material.dart';
 import 'landing_page.dart';
-import 'post_skill_page.dart';
+import 'dart:async'; // for TimeoutException
+import '../services/search_service.dart';
+// import 'post_skill_page.dart'; // no longer used directly here
 import '../services/auth_service.dart';
 import '../widgets/app_sidebar.dart';
+import '../services/health_service.dart';
+// Removed debug-only imports (seed/upsert/test helpers)
 
-class HomePage extends StatelessWidget {
+class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
   // ---- Theme (same palette family you’ve been using)
   static const Color bg = Color(0xFF0A0A0B);
   static const Color sidebar = Color(0xFF0F1115);
   static const Color surface = Color(0xFF12141B);
+  static const Color surfaceAlt = Color(0xFF12141B);
   static const Color card = Color(0xFF111318);
   static const Color textPrimary = Color(0xFFEAEAF2);
   static const Color textMuted = Color(0xFFB6BDD0);
@@ -22,7 +27,125 @@ class HomePage extends StatelessWidget {
   static const Color warning = Color(0xFFF59E0B);
 
   @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  final _searchService = SearchService();
+  bool _loadingSearch = false;
+  List<SearchResult> _searchResults = [];
+  String _currentQuery = '';
+
+  Future<void> _handleSearch(String query) async {
+    final q = query.trim();
+    // if empty, clear results and return to default display
+    if (q.isEmpty) {
+      if (mounted)
+        setState(() {
+          _searchResults = [];
+          _currentQuery = '';
+        });
+      return;
+    }
+    setState(() {
+      _loadingSearch = true;
+      _searchResults = [];
+    });
+    try {
+      // Primary attempt: modest limit to improve latency
+      final res = await _searchService.search(
+        q,
+        mode: 'offers',
+        limit: 10,
+        timeout: const Duration(seconds: 12),
+      );
+      if (mounted)
+        setState(() {
+          _searchResults = res;
+          _currentQuery = q;
+        });
+    } on TimeoutException {
+      // Quick retry with smaller limit and shorter timeout
+      try {
+        final retry = await _searchService.search(
+          q,
+          mode: 'offers',
+          limit: 8,
+          timeout: const Duration(seconds: 8),
+        );
+        if (mounted)
+          setState(() {
+            _searchResults = retry;
+            _currentQuery = q;
+          });
+      } on TimeoutException {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Search timed out. The server may be busy—please try again.',
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Search failed: $e')));
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Search error: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _loadingSearch = false);
+    }
+  }
+
+  final _health = HealthService();
+
+  @override
+  void initState() {
+    super.initState();
+    _checkHealthOnce();
+  }
+
+  Future<void> _checkHealthOnce() async {
+    try {
+      final res = await _health.ping();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Backend: $res')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Health check failed: $e')));
+    }
+  }
+
+  // Removed unused helper _skillsListToText
+
+  // Removed debug-only helper methods (_seedTestProfiles, _upsertMeNow, _testSearchNow)
+
+  @override
   Widget build(BuildContext context) {
+    // Local aliases for theme tokens (defined on the widget class)
+    final bg = HomePage.bg;
+    final surface = HomePage.surface;
+    // Removed unused variable surfaceAlt; use HomePage.surfaceAlt directly where needed.
+    final card = HomePage.card;
+    final textPrimary = HomePage.textPrimary;
+    final textMuted = HomePage.textMuted;
+    final line = HomePage.line;
+    final accent = HomePage.accent;
+    final accentAlt = HomePage.accentAlt;
+
     final theme = ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
@@ -34,14 +157,14 @@ class HomePage extends StatelessWidget {
         background: bg,
         primary: accent,
       ),
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         backgroundColor: bg,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: false,
         foregroundColor: textPrimary,
       ),
-      inputDecorationTheme: const InputDecorationTheme(
+      inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: surface,
         border: OutlineInputBorder(
@@ -60,11 +183,11 @@ class HomePage extends StatelessWidget {
         labelStyle: TextStyle(color: textMuted),
       ),
       chipTheme: ChipThemeData(
-        side: const BorderSide(color: line),
+        side: BorderSide(color: line),
         backgroundColor: surface,
         selectedColor: const Color(0xFF1A1333),
         checkmarkColor: accentAlt,
-        labelStyle: const TextStyle(color: textPrimary),
+        labelStyle: TextStyle(color: textPrimary),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
       ),
       dividerColor: line,
@@ -74,7 +197,7 @@ class HomePage extends StatelessWidget {
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: line),
+          side: BorderSide(color: line),
         ),
         margin: const EdgeInsets.all(0), // optional, matches tight layout
       ),
@@ -90,8 +213,16 @@ class HomePage extends StatelessWidget {
             Expanded(
               child: Column(
                 children: [
-                  _TopBar(),
-                  Expanded(child: _DiscoverPane()),
+                  _TopBar(onSearch: _handleSearch),
+                  if (_loadingSearch)
+                    const LinearProgressIndicator(minHeight: 3),
+                  Expanded(
+                    child: _DiscoverPane(
+                      searchResults: _searchResults,
+                      onSearch: _handleSearch,
+                      currentQuery: _currentQuery,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -102,177 +233,31 @@ class HomePage extends StatelessWidget {
   }
 }
 
-/* =============================== SIDEBAR =============================== */
+/* =============================== (Removed Sidebar) =============================== */
+// Sidebar widget removed; navigation handled by AppSidebar in its own file.
 
-class _Sidebar extends StatelessWidget {
-  const _Sidebar();
-
-  static const double _w = 240;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: _w,
-      decoration: const BoxDecoration(
-        color: HomePage.sidebar,
-        border: Border(right: BorderSide(color: HomePage.line)),
-      ),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: SizedBox(
-                height: 70,
-                child: Image.asset(
-                  'assets/Swap-removebg-preview.png',
-                  fit: BoxFit.contain,
-                ),
-              ),
-            ),
-          ),
-          const Divider(color: HomePage.line, height: 1),
-          const SizedBox(height: 12),
-          _NavItem(icon: Icons.home_rounded, label: 'Home', active: true),
-          _NavItem(icon: Icons.explore_outlined, label: 'Discover'),
-          _NavItem(
-            icon: Icons.add_circle_outline,
-            label: 'Post Skill',
-            onTap: () {
-              Navigator.of(
-                context,
-              ).push(MaterialPageRoute(builder: (_) => const PostSkillPage()));
-            },
-          ),
-          _NavItem(icon: Icons.inbox_outlined, label: 'Requests', badge: '2'),
-          _NavItem(icon: Icons.analytics_outlined, label: 'Dashboard'),
-          _NavItem(icon: Icons.person_outline, label: 'Profile'),
-          const Spacer(),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Container(
-              decoration: BoxDecoration(
-                color: const Color(0x151A1333),
-                border: Border.all(color: HomePage.line),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Share Your Skills',
-                      style: TextStyle(
-                        color: HomePage.textPrimary,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Start earning by helping others learn',
-                      style: TextStyle(color: HomePage.textMuted, fontSize: 12),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 44,
-                    child: FilledButton(
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const PostSkillPage(),
-                          ),
-                        );
-                      },
-                      style: FilledButton.styleFrom(
-                        backgroundColor: HomePage.accent,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text('Post a Skill'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _NavItem extends StatelessWidget {
-  const _NavItem({
-    required this.icon,
-    required this.label,
-    this.active = false,
-    this.badge,
-    this.onTap,
-  });
-  final VoidCallback? onTap;
-
-  final IconData icon;
-  final String label;
-  final bool active;
-  final String? badge;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(10, 6, 10, 6),
-      decoration: BoxDecoration(
-        color: active ? const Color(0x201A1333) : Colors.transparent,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: ListTile(
-        leading: Icon(
-          icon,
-          color: active ? HomePage.accentAlt : HomePage.textMuted,
-        ),
-        title: Text(
-          label,
-          style: TextStyle(
-            color: active ? Colors.white : HomePage.textMuted,
-            fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-          ),
-        ),
-        trailing: badge == null
-            ? null
-            : Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF164E63),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: HomePage.line),
-                ),
-                child: Text(
-                  badge!,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    height: 1,
-                  ),
-                ),
-              ),
-        onTap: onTap,
-      ),
-    );
-  }
-}
+// Removed _NavItem (unused after Sidebar removal)
 
 /* ============================= DISCOVER PANE ============================= */
 
-class _DiscoverPane extends StatelessWidget {
-  _DiscoverPane();
+class _DiscoverPane extends StatefulWidget {
+  _DiscoverPane({
+    Key? key,
+    this.searchResults,
+    this.onSearch,
+    this.currentQuery,
+  }) : super(key: key);
+
+  final List<SearchResult>? searchResults;
+  final ValueChanged<String>? onSearch;
+  final String? currentQuery;
+
+  @override
+  State<_DiscoverPane> createState() => _DiscoverPaneState();
+}
+
+class _DiscoverPaneState extends State<_DiscoverPane> {
+  late final TextEditingController _searchCtrl;
 
   final List<_Skill> skills = [
     _Skill(
@@ -343,9 +328,189 @@ class _DiscoverPane extends StatelessWidget {
     'Tutoring',
     'Music',
   ];
+  @override
+  void initState() {
+    super.initState();
+    _searchCtrl = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final searchResults = widget.searchResults;
+
+    // If a search was performed, show backend results instead of the
+    // default curated skill grid.
+    if (searchResults != null && searchResults.isNotEmpty) {
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Search results' +
+                          (widget.currentQuery?.isNotEmpty == true
+                              ? ' for "${widget.currentQuery}"'
+                              : ''),
+                      style: TextStyle(
+                        color: HomePage.textPrimary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: () {
+                      _searchCtrl.clear();
+                      widget.onSearch?.call('');
+                    },
+                    icon: const Icon(
+                      Icons.close,
+                      size: 18,
+                      color: Colors.white,
+                    ),
+                    label: const Text('Close'),
+                    style: TextButton.styleFrom(foregroundColor: Colors.white),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final maxW = constraints.maxWidth;
+                    final crossAxisCount = maxW >= 1200
+                        ? 3
+                        : (maxW >= 780 ? 2 : 1);
+                    return GridView.builder(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: crossAxisCount,
+                        crossAxisSpacing: 18,
+                        mainAxisSpacing: 18,
+                        mainAxisExtent: 240,
+                      ),
+                      itemCount: searchResults.length,
+                      itemBuilder: (context, i) {
+                        final r = searchResults[i];
+                        return Card(
+                          color: HomePage.surface,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            side: BorderSide(color: HomePage.line),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Wrap(
+                                  spacing: 8,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: HomePage.surfaceAlt,
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                        border: Border.all(
+                                          color: HomePage.line,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        'profile',
+                                        style: TextStyle(
+                                          color: HomePage.textMuted,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  r.displayName.isNotEmpty
+                                      ? r.displayName
+                                      : r.email,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: HomePage.textPrimary,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Expanded(
+                                  child: Text(
+                                    r.bio,
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(color: HomePage.textMuted),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        r.skillsToOffer,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: HomePage.textMuted,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.star,
+                                          color: Colors.amber,
+                                          size: 18,
+                                        ),
+                                        Text(
+                                          r.score.toStringAsFixed(2),
+                                          style: TextStyle(
+                                            color: HomePage.textPrimary,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return SafeArea(
       child: CustomScrollView(
         slivers: [
@@ -359,7 +524,7 @@ class _DiscoverPane extends StatelessWidget {
                 children: [
                   const SizedBox(height: 6),
                   const Text(
-                    'Discover Skills',
+                    'Find Services to Swap',
                     style: TextStyle(
                       color: HomePage.textPrimary,
                       fontWeight: FontWeight.w800,
@@ -368,7 +533,7 @@ class _DiscoverPane extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'Find amazing skills to learn from our community',
+                    'Find amazing services and skills to learn and swap from our community',
                     style: TextStyle(color: HomePage.textMuted, fontSize: 13),
                   ),
                   const SizedBox(height: 18),
@@ -378,12 +543,27 @@ class _DiscoverPane extends StatelessWidget {
                     children: [
                       Expanded(
                         child: TextField(
-                          decoration: const InputDecoration(
+                          controller: _searchCtrl,
+                          onSubmitted: (v) => widget.onSearch?.call(v),
+                          onChanged: (v) {
+                            setState(() {});
+                            if (v.trim().isEmpty) widget.onSearch?.call('');
+                          },
+                          decoration: InputDecoration(
                             prefixIcon: Icon(
                               Icons.search,
                               color: HomePage.textMuted,
                             ),
                             hintText: 'Search skills...',
+                            suffixIcon: _searchCtrl.text.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () {
+                                      _searchCtrl.clear();
+                                      widget.onSearch?.call('');
+                                    },
+                                  )
+                                : null,
                           ),
                         ),
                       ),
@@ -701,7 +881,9 @@ class _Skill {
 }
 
 class _TopBar extends StatelessWidget implements PreferredSizeWidget {
-  const _TopBar({super.key});
+  const _TopBar({this.onSearch});
+
+  final ValueChanged<String>? onSearch;
 
   @override
   Size get preferredSize => const Size.fromHeight(64);
@@ -718,6 +900,7 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
             child: SizedBox(
               height: 44,
               child: TextField(
+                onSubmitted: (v) => onSearch?.call(v),
                 decoration: InputDecoration(
                   hintText: 'Search skills...',
                   prefixIcon: const Icon(
@@ -729,15 +912,15 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
                   contentPadding: EdgeInsets.zero,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(999),
-                    borderSide: const BorderSide(color: HomePage.line),
+                    borderSide: BorderSide(color: HomePage.line),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(999),
-                    borderSide: const BorderSide(color: HomePage.line),
+                    borderSide: BorderSide(color: HomePage.line),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(999),
-                    borderSide: const BorderSide(color: HomePage.accent),
+                    borderSide: BorderSide(color: HomePage.accent),
                   ),
                 ),
               ),

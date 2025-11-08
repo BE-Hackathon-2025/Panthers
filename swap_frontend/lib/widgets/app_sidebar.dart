@@ -1,7 +1,9 @@
 // lib/widgets/app_sidebar.dart
 import 'package:flutter/material.dart';
 import '../pages/post_skill_page.dart';
-import '../pages/home_page.dart'; // for colors (or move colors to a theme file)
+import '../pages/home_page.dart';
+import '../pages/profile_page.dart';
+import '../pages/request_page.dart';
 
 class AppSidebar extends StatelessWidget {
   const AppSidebar({super.key, this.active = 'Home'});
@@ -16,7 +18,7 @@ class AppSidebar extends StatelessWidget {
 
     return Container(
       width: width,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: HomePage.sidebar,
         border: Border(right: BorderSide(color: HomePage.line)),
       ),
@@ -35,14 +37,14 @@ class AppSidebar extends StatelessWidget {
               ),
             ),
           ),
-          const Divider(color: HomePage.line, height: 1),
+          Divider(color: HomePage.line, height: 1),
           const SizedBox(height: 12),
           _NavItem(
             icon: Icons.home_rounded,
             label: 'Home',
             active: isActive('Home'),
             onTap: () => Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (_) => const HomePage()),
+              MaterialPageRoute(builder: (_) => HomePage()),
               (route) => false,
             ),
           ),
@@ -59,6 +61,9 @@ class AppSidebar extends StatelessWidget {
             label: 'Requests',
             badge: '2',
             active: isActive('Requests'),
+            onTap: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const RequestsPage())),
           ),
           _NavItem(
             icon: Icons.analytics_outlined,
@@ -69,6 +74,9 @@ class AppSidebar extends StatelessWidget {
             icon: Icons.person_outline,
             label: 'Profile',
             active: isActive('Profile'),
+            onTap: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const ProfilePage())),
           ),
           const Spacer(),
           Padding(

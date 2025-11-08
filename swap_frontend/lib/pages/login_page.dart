@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
+import 'package:flutter/foundation.dart';
 import '../services/auth_service.dart';
 import 'signup_page.dart';
 import 'forgot_password_page.dart';
@@ -459,8 +460,6 @@ class _Rainbow3D extends StatelessWidget {
       disableZoom: false,
       ar: false,
       exposure: 1.1,
-      shadowIntensity: 0.1,
-      shadowSoftness: 0.1,
     );
   }
 }
