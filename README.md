@@ -8,7 +8,7 @@
 <img width="1507" height="863" alt="Screenshot 2025-11-08 at 1 06 40 AM" src="https://github.com/user-attachments/assets/ddd18e3c-41d1-4bbe-b69e-5660e0367ccb" />
 <img width="1507" height="863" alt="Screenshot 2025-11-08 at 1 06 47 AM" src="https://github.com/user-attachments/assets/fe64da47-431d-4636-94c0-6d2795b4b39f" />
 
-## Challenge Statement(s) Addressed 🎯
+## Challenge Statement(s) Addressed 
 
 In Arkansas, thousands of people have talent, but limited access to opportunity. Small businesses make up **99.3% of all enterprises (≈ 258,000)**, yet the state still ranks **40th out of 51** in overall economic activity.
 
@@ -37,7 +37,7 @@ A college student in Little Rock who codes websites can trade with a hairstylist
 She builds the website; he braids her hair.  
 No cash — just community, fair value, and mutual growth.
 
-## 🌍 Why It Matters to Little Rock and Arkansas  
+## Why It Matters to Little Rock and Arkansas  
 
 - **Small Business Owners** often skip marketing or tech services because every dollar counts.  
 - **College Students** need real-world experience but can’t afford mentorship or tools.  
