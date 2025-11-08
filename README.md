@@ -21,18 +21,18 @@ The problem isn’t a lack of ability. it’s a **lack of access**.
 - How might we turn *“what you can do”* into *“what you need”*?  
 - How might AI connect people so skills never go unused?
   
-## 💡 Project Description  
+## Project Description  
 
 **$wap** is an AI-powered skill-exchange platform that lets people **trade skills instead of cash**. It creates a new, inclusive economy where your abilities — not your wallet — open doors.  
 
-### 🧠 How It Works  
+### How It Works  
 1. **Create a Profile** — List the skills you can offer and what you need.  
 2. **AI Matchmaking** — Machine learning pairs you with users whose skills and availability fit yours.  
 3. **Swap Fairly** — Exchange services, time, or expertise — no money required.  
 4. **Earn & Redeem Credits** — Every successful swap earns credibility and “swap credits.”  
 5. **Build Trust** — Ratings and feedback verify quality and accountability.  
 
-### 💬 Example  
+### Example  
 A college student in Little Rock who codes websites can trade with a hairstylist who needs a site.  
 She builds the website; he braids her hair.  
 No cash — just community, fair value, and mutual growth.
@@ -45,7 +45,7 @@ No cash — just community, fair value, and mutual growth.
 
 By turning skills into currency, **$wap activates Arkansas’s underused talent** and fosters a local economy built on collaboration and trust — not cash.
 
-## 💎 Unique Value Proposition  
+## Unique Value Proposition  
 
 Traditional freelance platforms require money, subscriptions, and transaction fees.  
 **$wap reimagines value exchange as reciprocity, not currency.**  
