@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.7.0
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      FIREBASE_CREDENTIALS_PATH: /app/firebase-credentials.json
+    depends_on:
+      qdrant:
+        condition: service_started
+    volumes:
+      - ./app:/app/app
+      - ./firebase-credentials.json:/app/firebase-credentials.json:ro
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  qdrant_data:
+

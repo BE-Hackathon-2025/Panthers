@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: swap_user
+          POSTGRES_PASSWORD: swap_pass
+          POSTGRES_DB: swap_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      qdrant:
+        image: qdrant/qdrant:v1.7.0
+        ports:
+          - 6333:6333
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install flake8 black
+      
+      - name: Lint with flake8
+        run: |
+          flake8 app --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 app --count --exit-zero --max-complexity=10 --max-line-length=100 --statistics
+      
+      - name: Check code formatting with black
+        run: |
+          black --check app
+      
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql://swap_user:swap_pass@localhost:5432/swap_db
+          QDRANT_HOST: localhost
+          QDRANT_PORT: 6333
+        run: |
+          pytest -v
+

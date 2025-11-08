@@ -1,0 +1,50 @@
+# Example: Build image, push to registry, then deploy to Fly.io
+# Rename to deploy.yml if you want to use this approach
+
+name: Deploy to Fly.io (with Docker Registry)
+
+on:
+  push:
+    branches:
+      - main  # Triggers on direct push or when PR is merged to main
+
+jobs:
+  build-and-deploy:
+    name: Build Docker image and deploy
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/swap-backend:latest
+            ghcr.io/${{ github.repository }}/swap-backend:${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/swap-backend:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}/swap-backend:buildcache,mode=max
+      
+      - name: Setup Fly.io CLI
+        uses: superfly/flyctl-actions/setup-flyctl@master
+      
+      - name: Deploy to Fly.io from registry
+        run: |
+          flyctl deploy \
+            --image ghcr.io/${{ github.repository }}/swap-backend:${{ github.sha }}
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
