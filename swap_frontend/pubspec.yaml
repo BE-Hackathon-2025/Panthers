@@ -9,11 +9,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  firebase_core: ^4.2.1
-  firebase_auth: ^6.1.2
-  cloud_firestore: ^6.1.0
-  firebase_storage: ^13.0.4
-  google_sign_in: ^6.2.1
+
+  # ── Entra External ID auth (PKCE on web) ──────────────────────
+  flutter_secure_storage: ^9.0.0
+  crypto: ^3.0.3
+
+  # ── Existing packages ──────────────────────────────────────────
   model_viewer_plus: ^1.7.2
   image_picker: ^1.0.7
   http: ^1.5.0

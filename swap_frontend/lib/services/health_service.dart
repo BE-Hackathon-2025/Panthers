@@ -1,9 +1,11 @@
 import 'package:http/http.dart' as http;
 
+import '../config.dart';
+
 class HealthService {
   final String baseUrl;
   HealthService({String? baseUrl})
-      : baseUrl = baseUrl ?? 'http://localhost:8000';
+      : baseUrl = baseUrl ?? AppConfig.apiBaseUrl;
 
   Future<String> ping() async {
     final resp = await http

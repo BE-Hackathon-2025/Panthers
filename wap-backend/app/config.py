@@ -6,43 +6,54 @@ from typing import Optional
 
 class Settings(BaseSettings):
     """Application settings."""
-    
-    # Firebase (replaces PostgreSQL)
-    firebase_credentials_path: Optional[str] = None  # Path to service account JSON
-    firebase_credentials_json: Optional[str] = None  # JSON string from env var
 
-    # Azure OpenAI (for embeddings)
+    # ── Microsoft Entra External ID (CIAM) ───────────────────────────────────
+    azure_entra_tenant_name: str = "swapauth"
+    azure_entra_tenant_id: Optional[str] = None
+    azure_entra_client_id: Optional[str] = None
+    azure_entra_audience: str = "api://swap-api/access_as_user"
+
+    # ── Azure Cosmos DB (new) ─────────────────────────────────────────────────
+    cosmos_connection_string: Optional[str] = None
+    cosmos_database_name: str = "swap-db"
+
+    # ── Azure OpenAI (for embeddings) ─────────────────────────────────────────
     azure_openai_endpoint: Optional[str] = None
     azure_openai_api_key: Optional[str] = None
     azure_openai_api_version: str = "2024-02-01"
-    azure_embedding_deployment: str = "text-embedding-3-small"
-    vector_dim: int = 1536  # text-embedding-3-small uses 1536 dimensions
+    azure_embedding_deployment: str = "text-embedding-3-large"
+    vector_dim: int = 1536
 
-    # Azure AI Search (for vector storage and search)
+    # ── Azure AI Search (for vector storage and search) ───────────────────────
     azure_search_endpoint: Optional[str] = None
     azure_search_api_key: Optional[str] = None
     azure_search_index: str = "swap-users"
-    
-    # Redis Cache (optional - disabled in production by default)
-    redis_enabled: bool = True  # Set to False to disable caching
+    azure_search_skills_index: str = "swap-skills"
+
+    # ── Redis Cache ───────────────────────────────────────────────────────────
+    redis_enabled: bool = True
     redis_host: str = "localhost"
     redis_port: int = 6379
-    redis_ttl: int = 3600  # Cache TTL in seconds (1 hour)
-    redis_url: Optional[str] = None  # Full URL for managed Redis (e.g., Upstash)
+    redis_ttl: int = 3600
+    redis_url: Optional[str] = None  # Full URL for Azure Cache for Redis
 
-    # Email (Resend)
-    resend_api_key: Optional[str] = None
-    email_from: str = "onboarding@resend.dev"  # Default Resend test sender
-    email_enabled: bool = True  # Set to False to disable all emails
-    app_url: str = "http://localhost:3000"  # Frontend URL for email links
+    # ── Application Insights (new) ────────────────────────────────────────────
+    applicationinsights_connection_string: Optional[str] = None
 
-    # App
+    # ── Email (Azure Communication Services) ──────────────────────────────────
+    azure_comm_connection_string: Optional[str] = None
+    email_from: str = "DoNotReply@<your-domain>.azurecomm.net"
+    email_enabled: bool = True
+    app_url: str = "http://localhost:3000"
+
+    # ── App ───────────────────────────────────────────────────────────────────
     app_name: str = "$wap"
     debug: bool = False
-    
+
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"  # Silently drop unknown env vars (e.g., legacy fields in .env)
 
 
 settings = Settings()

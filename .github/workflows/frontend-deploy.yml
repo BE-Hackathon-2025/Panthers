@@ -1,0 +1,100 @@
+name: Frontend — Build & Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "swap_frontend/**"
+      - ".github/workflows/frontend-deploy.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "swap_frontend/**"
+
+env:
+  FLUTTER_VERSION: "3.24.0"
+  API_BASE_URL: "https://app-swapai-backend.azurewebsites.net"
+  ENTRA_TENANT_NAME: "swapauth"
+  ENTRA_REDIRECT_URI: "https://stwa-swap-dev.azurestaticapps.net/"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ── 1. Build Flutter Web ────────────────────────────────────────────────────
+  build:
+    name: Build Flutter Web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: swap_frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Get Flutter packages
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Build web (release)
+        run: |
+          flutter build web --release \
+            --dart-define=API_BASE_URL=${{ env.API_BASE_URL }} \
+            --dart-define=ENTRA_TENANT_NAME=${{ env.ENTRA_TENANT_NAME }} \
+            --dart-define=ENTRA_TENANT_ID=${{ secrets.ENTRA_TENANT_ID }} \
+            --dart-define=ENTRA_CLIENT_ID=${{ secrets.ENTRA_FRONTEND_CLIENT_ID }} \
+            --dart-define=ENTRA_REDIRECT_URI=${{ env.ENTRA_REDIRECT_URI }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-web-build
+          path: swap_frontend/build/web/
+          retention-days: 1
+
+  # ── 2. Deploy to Azure Static Web Apps ──────────────────────────────────────
+  deploy:
+    name: Deploy to Static Web Apps
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4 # Required by the SWA action
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: flutter-web-build
+          path: swap_frontend/build/web/
+
+      - name: Deploy to Azure Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: "upload"
+          app_location: "swap_frontend/build/web"
+          skip_app_build: true # Already built above
+          output_location: ""
+
+      - name: Smoke test
+        run: |
+          sleep 10
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            https://stwa-swap-dev.azurestaticapps.net/)
+          echo "Frontend health check returned: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "::warning::Frontend returned $STATUS (may still be propagating)"
+          fi

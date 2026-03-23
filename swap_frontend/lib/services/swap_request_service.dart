@@ -1,19 +1,20 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
+import '../config.dart';
 import '../models/swap_request.dart';
+import 'b2c_auth_service.dart';
 
 /// Service for swap request API calls.
 class SwapRequestService {
   final String baseUrl;
 
   SwapRequestService({String? baseUrl})
-      : baseUrl = baseUrl ?? 'http://localhost:8000';
+      : baseUrl = baseUrl ?? AppConfig.apiBaseUrl;
 
-  /// Get authorization headers if user is signed in.
+  /// Get authorization headers — uses B2C access token when available.
   Future<Map<String, String>> _getHeaders() async {
     final headers = <String, String>{
       'Content-Type': 'application/json',
@@ -21,11 +22,10 @@ class SwapRequestService {
     };
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null && !kIsWeb) {
-        final idToken = await user.getIdToken();
-        if (idToken != null) {
-          headers['Authorization'] = 'Bearer $idToken';
+      if (!kIsWeb) {
+        final token = await B2CAuthService.instance.getAccessToken();
+        if (token != null) {
+          headers['Authorization'] = 'Bearer $token';
         }
       }
     } catch (_) {
@@ -42,6 +42,8 @@ class SwapRequestService {
     required String requesterOffer,
     required String requesterNeed,
     String? message,
+    String? requesterOfferSkillId,
+    String? requesterNeedSkillId,
   }) async {
     final uri = Uri.parse('$baseUrl/swap-requests').replace(
       queryParameters: {'requester_uid': requesterUid},
@@ -55,6 +57,10 @@ class SwapRequestService {
       'requester_offer': requesterOffer,
       'requester_need': requesterNeed,
       if (message != null && message.isNotEmpty) 'message': message,
+      if (requesterOfferSkillId != null)
+        'requester_offer_skill_id': requesterOfferSkillId,
+      if (requesterNeedSkillId != null)
+        'requester_need_skill_id': requesterNeedSkillId,
     });
 
     final response = await http
@@ -178,6 +184,39 @@ class SwapRequestService {
       throw Exception(
           'Failed to cancel request: ${response.statusCode} ${response.reasonPhrase}');
     }
+  }
+
+  /// Confirm swap completion (mutual confirmation).
+  Future<SwapRequest> confirmCompletion(
+    String requestId,
+    String uid, {
+    required double hours,
+    required String skillLevel,
+    String? notes,
+  }) async {
+    final uri = Uri.parse('$baseUrl/swap-requests/$requestId/confirm-completion')
+        .replace(queryParameters: {'uid': uid});
+
+    debugPrint('SwapRequestService: POST $uri');
+
+    final headers = await _getHeaders();
+    final body = jsonEncode({
+      'hours': hours,
+      'skill_level': skillLevel,
+      if (notes != null && notes.isNotEmpty) 'notes': notes,
+    });
+
+    final response = await http
+        .post(uri, headers: headers, body: body)
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to confirm completion: ${response.statusCode} ${response.body}');
+    }
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    return SwapRequest.fromJson(data);
   }
 
   /// Get a specific swap request by ID.

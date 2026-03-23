@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field, EmailStr
 class ProfileBase(BaseModel):
     """Base profile fields - matches Flutter AppUser model."""
     
-    # Firebase Auth fields
-    uid: str = Field(..., description="Firebase Auth UID")
+    # Auth fields
+    uid: str = Field(..., description="User UID (Azure AD B2C object ID)")
     email: EmailStr = Field(..., description="User email")
     display_name: Optional[str] = Field(None, description="Display name")
     photo_url: Optional[str] = Field(None, description="Profile photo URL")
@@ -66,7 +66,7 @@ class ProfileResponse(ProfileBase):
         from_attributes = True
         json_schema_extra = {
             "example": {
-                "uid": "firebase_user_123",
+                "uid": "b2c_user_abc123",
                 "email": "alice@example.com",
                 "display_name": "Alice Smith",
                 "photo_url": "https://example.com/photo.jpg",
@@ -102,6 +102,8 @@ class ProfileSearchResult(BaseModel):
     services_needed: Optional[str]
     dm_open: Optional[bool]
     show_city: Optional[bool]
+    swap_credits: int = Field(0, description="Total swap credits earned (trust indicator)")
+    swaps_completed: int = Field(0, description="Number of completed swaps")
     score: float = Field(..., description="Similarity score (0-1)")
 
 
@@ -114,6 +116,57 @@ class ReciprocalMatchResult(ProfileSearchResult):
 
 
 # =============================================================================
+# Skill Schemas
+# =============================================================================
+
+class SkillCreate(BaseModel):
+    """Schema for creating a skill."""
+    title: str = Field(..., min_length=1, max_length=200, description="Skill title")
+    description: str = Field(..., min_length=1, max_length=2000, description="Skill description")
+    category: str = Field(..., description="Skill category")
+    difficulty: str = Field(..., description="Skill difficulty level")
+    estimated_hours: float = Field(1, gt=0, le=100, description="Estimated hours")
+    delivery: str = Field("Remote Only", description="Delivery method")
+    tags: List[str] = Field(default_factory=list, description="Tags")
+    deliverables: List[str] = Field(default_factory=list, description="Deliverables")
+
+
+class SkillResponse(BaseModel):
+    """Schema for skill responses."""
+    id: str
+    posted_by: str
+    title: str
+    description: str
+    category: str
+    difficulty: str
+    estimated_hours: float = 1
+    delivery: str = "Remote Only"
+    tags: List[str] = Field(default_factory=list)
+    deliverables: List[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class SkillSearchResult(BaseModel):
+    """Schema for skill search results."""
+    id: str
+    skill_id: str
+    posted_by: str
+    title: str
+    description: str = ""
+    category: str = ""
+    difficulty: str = ""
+    estimated_hours: float = 1
+    delivery: str = "Remote Only"
+    tags: List[str] = Field(default_factory=list)
+    deliverables: List[str] = Field(default_factory=list)
+    poster_name: str = ""
+    poster_city: str = ""
+    poster_swap_credits: int = 0
+    score: float = 0.0
+
+
+# =============================================================================
 # Swap Request Schemas
 # =============================================================================
 
@@ -123,6 +176,7 @@ class SwapRequestStatus(str, Enum):
     accepted = "accepted"
     declined = "declined"
     cancelled = "cancelled"
+    completed = "completed"
 
 
 class SwapRequestCreate(BaseModel):
@@ -132,6 +186,8 @@ class SwapRequestCreate(BaseModel):
     requester_offer: str = Field(..., description="What you're offering in the swap")
     requester_need: str = Field(..., description="What you need from them")
     message: Optional[str] = Field(None, max_length=500, description="Optional intro message")
+    requester_offer_skill_id: Optional[str] = Field(None, description="ID of the skill being offered")
+    requester_need_skill_id: Optional[str] = Field(None, description="ID of the skill being requested")
 
 
 class SwapRequestAction(BaseModel):
@@ -167,6 +223,10 @@ class SwapRequestResponse(BaseModel):
     conversation_id: Optional[str] = None
     requester_profile: Optional[SwapParticipant] = None
     recipient_profile: Optional[SwapParticipant] = None
+    requester_confirmed: bool = False
+    recipient_confirmed: bool = False
+    requester_offer_skill_id: Optional[str] = None
+    requester_need_skill_id: Optional[str] = None
 
 
 # =============================================================================
@@ -290,4 +350,70 @@ class ReportResponse(BaseModel):
     id: str
     status: str = "pending"
     message: str = "Report submitted. We'll review it within 24-48 hours."
+
+
+# =============================================================================
+# Points & Credits Schemas
+# =============================================================================
+
+class PointsTransactionType(str, Enum):
+    """Type of points transaction."""
+    earned = "earned"
+    spent = "spent"
+
+
+class PointsTransactionReason(str, Enum):
+    """Reason for points transaction."""
+    swap_completed = "swap_completed"
+    priority_boost = "priority_boost"
+    request_without_reciprocity = "request_without_reciprocity"
+    bonus = "bonus"
+
+
+class SkillLevel(str, Enum):
+    """Skill difficulty level."""
+    beginner = "beginner"
+    intermediate = "intermediate"
+    advanced = "advanced"
+
+
+class SwapCompletionRequest(BaseModel):
+    """Schema for marking a swap as completed."""
+    hours: float = Field(..., gt=0, le=100, description="Hours spent on the swap")
+    skill_level: SkillLevel = Field(..., description="Difficulty level of the skill exchanged")
+    notes: Optional[str] = Field(None, max_length=500, description="Optional notes about the swap")
+
+
+class SwapConfirmRequest(BaseModel):
+    """Schema for confirming swap completion (mutual confirmation)."""
+    hours: float = Field(..., gt=0, le=100, description="Hours spent on the swap")
+    skill_level: SkillLevel = Field(..., description="Difficulty level of the skill exchanged")
+    notes: Optional[str] = Field(None, max_length=500, description="Optional notes about the swap")
+
+
+class PointsTransactionResponse(BaseModel):
+    """Schema for a points transaction record."""
+    id: str
+    uid: str
+    type: PointsTransactionType
+    reason: PointsTransactionReason
+    points: int = 0
+    credits: int = 0
+    description: str = ""
+    swap_request_id: Optional[str] = None
+    created_at: datetime
+
+
+class PointsBalanceResponse(BaseModel):
+    """Schema for user's current balance."""
+    uid: str
+    points: int = 0
+    credits: int = 0
+    total_swaps_completed: int = 0
+
+
+class PointsSpendRequest(BaseModel):
+    """Schema for spending points."""
+    reason: PointsTransactionReason
+    duration_hours: Optional[int] = Field(None, ge=1, le=168, description="Duration for priority boost")
 

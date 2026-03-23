@@ -1,8 +1,7 @@
-"""Email service using Resend."""
+"""Email service using Azure Communication Services."""
 
 import logging
-from typing import Dict, Any, Optional
-import resend
+from typing import Any, Dict, Optional
 
 from app.config import settings
 from app.email_templates import (
@@ -19,21 +18,23 @@ logger = logging.getLogger(__name__)
 
 
 class EmailService:
-    """Service for sending emails via Resend."""
+    """Service for sending emails via Azure Communication Services."""
 
     def __init__(self):
-        """Initialize the Resend client."""
-        if settings.resend_api_key:
-            resend.api_key = settings.resend_api_key
+        """Initialize the ACS email client."""
+        self._client = None
         self.from_email = settings.email_from
-        self.enabled = settings.email_enabled and bool(settings.resend_api_key)
+        self.enabled = settings.email_enabled and bool(settings.azure_comm_connection_string)
 
-        if not self.enabled:
-            logger.warning("Email service disabled: missing RESEND_API_KEY or EMAIL_ENABLED=false")
+        if self.enabled:
+            from azure.communication.email import EmailClient
+            self._client = EmailClient.from_connection_string(settings.azure_comm_connection_string)
+        else:
+            logger.warning("Email service disabled: missing AZURE_COMM_CONNECTION_STRING or EMAIL_ENABLED=false")
 
     def _send(self, to_email: str, content: Dict[str, str]) -> bool:
         """
-        Send an email via Resend.
+        Send an email via Azure Communication Services.
 
         Args:
             to_email: Recipient email address
@@ -47,16 +48,21 @@ class EmailService:
             return False
 
         try:
-            params = {
-                "from": self.from_email,
-                "to": [to_email],
-                "subject": content["subject"],
-                "html": content["html"],
-                "text": content["text"],
+            message = {
+                "senderAddress": self.from_email,
+                "recipients": {
+                    "to": [{"address": to_email}],
+                },
+                "content": {
+                    "subject": content["subject"],
+                    "html": content["html"],
+                    "plainText": content["text"],
+                },
             }
 
-            response = resend.Emails.send(params)
-            logger.info(f"Email sent to {to_email}: {content['subject']} (id: {response.get('id')})")
+            poller = self._client.begin_send(message)
+            result = poller.result()
+            logger.info(f"Email sent to {to_email}: {content['subject']} (id: {result['id']})")
             return True
 
         except Exception as e:

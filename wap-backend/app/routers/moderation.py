@@ -3,7 +3,6 @@
 from typing import List
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
-from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.schemas import (
     BlockCreate,
@@ -12,13 +11,13 @@ from app.schemas import (
     ReportResponse,
     ConversationStatus,
 )
-from app.firebase_db import get_firebase_service
+from app.cosmos_db import get_cosmos_service
 
 router = APIRouter(prefix="/moderation", tags=["moderation"])
 
 
 def _convert_timestamp(value) -> str:
-    """Convert a Firestore timestamp to ISO string."""
+    """Convert a timestamp to ISO string."""
     if value is None:
         return datetime.utcnow().isoformat()
     if hasattr(value, "isoformat"):
@@ -35,59 +34,43 @@ def block_user(
     Block another user.
 
     Effects:
-    1. Creates block record
+    1. Creates block record in Cosmos DB
     2. Updates any shared conversation status to 'blocked'
     3. Prevents future swap requests between users
     4. Prevents messaging
     """
-    firebase = get_firebase_service()
-    db = firebase.db
+    cosmos = get_cosmos_service()
 
-    # Validate: can't block yourself
     if uid == block.blocked_uid:
         raise HTTPException(status_code=400, detail="Cannot block yourself")
 
-    # Check if already blocked
-    existing = list(db.collection("blocks").where(
-        filter=FieldFilter("blocker_uid", "==", uid)
-    ).where(
-        filter=FieldFilter("blocked_uid", "==", block.blocked_uid)
-    ).limit(1).stream())
-
+    existing = cosmos.get_block(uid, block.blocked_uid)
     if existing:
         raise HTTPException(status_code=400, detail="User is already blocked")
 
-    now = datetime.utcnow()
-
-    # Create block record
-    block_doc = {
-        "blocker_uid": uid,
-        "blocked_uid": block.blocked_uid,
-        "created_at": now,
-        "reason": block.reason,
-    }
-
-    doc_ref = db.collection("blocks").document()
-    doc_ref.set(block_doc)
+    block_doc = cosmos.create_block(
+        blocker_uid=uid,
+        data={
+            "blocker_uid": uid,
+            "blocked_uid": block.blocked_uid,
+            "reason": block.reason,
+        },
+    )
 
     # Update any shared conversations to blocked status
-    conversations = db.collection("conversations").where(
-        filter=FieldFilter("participant_uids", "array_contains", uid)
-    ).stream()
-
-    for conv_doc in conversations:
-        conv_data = conv_doc.to_dict()
-        if block.blocked_uid in conv_data.get("participant_uids", []):
-            conv_doc.reference.update({
-                "status": ConversationStatus.blocked.value,
-                "updated_at": now,
-            })
+    conversations = cosmos.query_conversations_for_user(uid)
+    for conv in conversations:
+        if block.blocked_uid in conv.get("participant_uids", []):
+            cosmos.update_conversation(
+                conv["id"],
+                {"status": ConversationStatus.blocked.value},
+            )
 
     return BlockResponse(
-        id=doc_ref.id,
+        id=block_doc["id"],
         blocker_uid=uid,
         blocked_uid=block.blocked_uid,
-        created_at=now.isoformat(),
+        created_at=block_doc.get("created_at", datetime.utcnow().isoformat()),
         reason=block.reason,
     )
 
@@ -102,47 +85,24 @@ def unblock_user(
 
     Effects:
     1. Removes block record
-    2. Restores conversation status to 'active'
+    2. Restores conversation status to 'active' (if the other user hasn't also blocked)
     """
-    firebase = get_firebase_service()
-    db = firebase.db
+    cosmos = get_cosmos_service()
 
-    # Find the block record
-    blocks = list(db.collection("blocks").where(
-        filter=FieldFilter("blocker_uid", "==", uid)
-    ).where(
-        filter=FieldFilter("blocked_uid", "==", blocked_uid)
-    ).limit(1).stream())
-
-    if not blocks:
+    block = cosmos.get_block(uid, blocked_uid)
+    if not block:
         raise HTTPException(status_code=404, detail="Block not found")
 
-    # Delete the block
-    blocks[0].reference.delete()
+    cosmos.delete_block(block["id"], uid)
 
-    now = datetime.utcnow()
-
-    # Check if the other user also has a block
-    reverse_block = list(db.collection("blocks").where(
-        filter=FieldFilter("blocker_uid", "==", blocked_uid)
-    ).where(
-        filter=FieldFilter("blocked_uid", "==", uid)
-    ).limit(1).stream())
-
-    # Only restore conversation if neither user is blocking the other
+    # Only restore conversations if the reverse block doesn't exist either
+    reverse_block = cosmos.get_block(blocked_uid, uid)
     if not reverse_block:
-        conversations = db.collection("conversations").where(
-            filter=FieldFilter("participant_uids", "array_contains", uid)
-        ).stream()
-
-        for conv_doc in conversations:
-            conv_data = conv_doc.to_dict()
-            if blocked_uid in conv_data.get("participant_uids", []):
-                if conv_data.get("status") == ConversationStatus.blocked.value:
-                    conv_doc.reference.update({
-                        "status": ConversationStatus.active.value,
-                        "updated_at": now,
-                    })
+        conversations = cosmos.query_conversations_for_user(uid)
+        for conv in conversations:
+            if blocked_uid in conv.get("participant_uids", []):
+                if conv.get("status") == ConversationStatus.blocked.value:
+                    cosmos.update_conversation(conv["id"], {"status": ConversationStatus.active.value})
 
     return {"message": "User unblocked", "blocked_uid": blocked_uid}
 
@@ -152,25 +112,19 @@ def list_blocked_users(
     uid: str = Query(..., description="UID of the user"),
 ):
     """List all users blocked by this user."""
-    firebase = get_firebase_service()
-    db = firebase.db
+    cosmos = get_cosmos_service()
+    blocks = cosmos.list_blocks_by_user(uid)
 
-    blocks = db.collection("blocks").where(
-        filter=FieldFilter("blocker_uid", "==", uid)
-    ).order_by("created_at", direction="DESCENDING").stream()
-
-    result = []
-    for doc in blocks:
-        data = doc.to_dict()
-        result.append(BlockResponse(
-            id=doc.id,
-            blocker_uid=data.get("blocker_uid"),
-            blocked_uid=data.get("blocked_uid"),
-            created_at=_convert_timestamp(data.get("created_at")),
-            reason=data.get("reason"),
-        ))
-
-    return result
+    return [
+        BlockResponse(
+            id=b["id"],
+            blocker_uid=b.get("blocker_uid"),
+            blocked_uid=b.get("blocked_uid"),
+            created_at=_convert_timestamp(b.get("created_at")),
+            reason=b.get("reason"),
+        )
+        for b in blocks
+    ]
 
 
 @router.post("/report", response_model=ReportResponse)
@@ -181,38 +135,32 @@ def report_user(
     """
     Report a user for policy violation.
 
-    - Creates report for admin review
+    - Creates report in Cosmos DB for admin review
     - Optionally includes message context
     """
-    firebase = get_firebase_service()
-    db = firebase.db
+    cosmos = get_cosmos_service()
 
-    # Validate: can't report yourself
     if uid == report.reported_uid:
         raise HTTPException(status_code=400, detail="Cannot report yourself")
 
-    now = datetime.utcnow()
-
-    # Create report
-    report_doc = {
-        "reporter_uid": uid,
-        "reported_uid": report.reported_uid,
-        "conversation_id": report.conversation_id,
-        "message_id": report.message_id,
-        "reason": report.reason.value,
-        "details": report.details,
-        "status": "pending",
-        "created_at": now,
-        "reviewed_at": None,
-        "reviewed_by": None,
-        "resolution_notes": None,
-    }
-
-    doc_ref = db.collection("reports").document()
-    doc_ref.set(report_doc)
+    cosmos.create_report(
+        reporter_uid=uid,
+        data={
+            "reporter_uid": uid,
+            "reported_uid": report.reported_uid,
+            "conversation_id": report.conversation_id,
+            "message_id": report.message_id,
+            "reason": report.reason.value,
+            "details": report.details,
+            "status": "pending",
+            "reviewed_at": None,
+            "reviewed_by": None,
+            "resolution_notes": None,
+        },
+    )
 
     return ReportResponse(
-        id=doc_ref.id,
+        id="submitted",
         status="pending",
         message="Report submitted. We'll review it within 24-48 hours.",
     )
@@ -223,22 +171,16 @@ def list_my_reports(
     uid: str = Query(..., description="UID of the user"),
 ):
     """List reports submitted by this user."""
-    firebase = get_firebase_service()
-    db = firebase.db
+    cosmos = get_cosmos_service()
+    reports = cosmos.list_user_reports(uid)
 
-    reports = db.collection("reports").where(
-        filter=FieldFilter("reporter_uid", "==", uid)
-    ).order_by("created_at", direction="DESCENDING").stream()
-
-    result = []
-    for doc in reports:
-        data = doc.to_dict()
-        result.append({
-            "id": doc.id,
-            "reported_uid": data.get("reported_uid"),
-            "reason": data.get("reason"),
-            "status": data.get("status"),
-            "created_at": _convert_timestamp(data.get("created_at")),
-        })
-
-    return result
+    return [
+        {
+            "id": r["id"],
+            "reported_uid": r.get("reported_uid"),
+            "reason": r.get("reason"),
+            "status": r.get("status"),
+            "created_at": _convert_timestamp(r.get("created_at")),
+        }
+        for r in reports
+    ]

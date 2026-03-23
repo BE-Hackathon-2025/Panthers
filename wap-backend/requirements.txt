@@ -1,16 +1,24 @@
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-firebase-admin==6.2.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
 pydantic[email]==2.5.0
-# Azure AI Services
+python-dotenv==1.0.0
+azure-communication-email==1.0.0
+
+# ── Azure AI Services ──────────────────────────────────────
 openai==1.12.0
 azure-search-documents==11.4.0
 azure-identity==1.15.0
-python-dotenv==1.0.0
+
+# ── Azure — new services (Phase 3 migration) ──────────────
+azure-cosmos==4.5.1
+python-jose[cryptography]==3.3.0
+azure-keyvault-secrets==4.7.0
+opencensus-ext-azure==1.1.13
+
+# ── Redis ──────────────────────────────────────────────────
 redis==5.0.1
-resend==0.7.0
 
 # Testing dependencies
 pytest==7.4.3

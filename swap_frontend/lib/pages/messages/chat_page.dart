@@ -1,10 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 
+import '../../config.dart';
 import '../home_page.dart';
+import '../../services/b2c_auth_service.dart';
+import '../../services/swap_request_service.dart';
 import '../../models/conversation.dart';
+import '../../models/swap_request.dart';
 import '../../services/messaging_service.dart';
 import '../../widgets/message_bubble.dart';
 import '../../widgets/message_input.dart';
@@ -30,7 +35,11 @@ class _ChatPageState extends State<ChatPage> {
   String? _error;
   Timer? _pollTimer;
 
-  String get _currentUid => FirebaseAuth.instance.currentUser!.uid;
+  // Swap request tracking for completion banner
+  SwapRequest? _swapRequest;
+  bool _loadingSwapRequest = true;
+
+  String get _currentUid => B2CAuthService.instance.currentUser?.uid ?? '';
 
   String get _otherUid => widget.conversation.participantUids
       .firstWhere((uid) => uid != _currentUid, orElse: () => '');
@@ -41,6 +50,7 @@ class _ChatPageState extends State<ChatPage> {
     _loadMessages();
     _markAsRead();
     _startPolling();
+    _loadSwapRequest();
   }
 
   @override
@@ -54,8 +64,31 @@ class _ChatPageState extends State<ChatPage> {
   void _startPolling() {
     _pollTimer = Timer.periodic(
       const Duration(seconds: 10),
-      (_) => _loadMessages(silent: true),
+      (_) {
+        _loadMessages(silent: true);
+        _loadSwapRequest(silent: true);
+      },
     );
+  }
+
+  Future<void> _loadSwapRequest({bool silent = false}) async {
+    try {
+      final sr = await SwapRequestService().getRequest(
+        widget.conversation.swapRequestId,
+        _currentUid,
+      );
+      if (mounted) {
+        setState(() {
+          _swapRequest = sr;
+          _loadingSwapRequest = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading swap request: $e');
+      if (mounted && !silent) {
+        setState(() => _loadingSwapRequest = false);
+      }
+    }
   }
 
   Future<void> _loadMessages({bool silent = false}) async {
@@ -73,12 +106,10 @@ class _ChatPageState extends State<ChatPage> {
       );
       if (mounted) {
         setState(() {
-          // Messages come newest first, reverse for display
           _messages = messages.reversed.toList();
           _loading = false;
         });
 
-        // Scroll to bottom if not silent refresh
         if (!silent) {
           _scrollToBottom();
         }
@@ -166,7 +197,7 @@ class _ChatPageState extends State<ChatPage> {
   void _showBlockDialog() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         backgroundColor: HomePage.surface,
         title: const Text(
           'Block User',
@@ -178,16 +209,49 @@ class _ChatPageState extends State<ChatPage> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () => Navigator.of(dialogContext).pop(),
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              // TODO: Implement block functionality
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('User blocked')),
-              );
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+              try {
+                final uri = Uri.parse(
+                  '${AppConfig.apiBaseUrl}/moderation/block',
+                ).replace(queryParameters: {'uid': _currentUid});
+                final response = await http.post(
+                  uri,
+                  headers: {'Content-Type': 'application/json'},
+                  body: jsonEncode({
+                    'blocked_uid': _otherUid,
+                    'reason': 'blocked_from_chat',
+                  }),
+                );
+                if (!mounted) return;
+                if (response.statusCode == 200) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('User blocked')),
+                  );
+                  Navigator.of(context).pop();
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Failed to block user: ${response.statusCode}',
+                      ),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Error blocking user: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Block'),
@@ -198,33 +262,422 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _showReportDialog() {
+    String selectedReason = 'spam';
+    final detailsController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: HomePage.surface,
-        title: const Text(
-          'Report User',
-          style: TextStyle(color: HomePage.textPrimary),
-        ),
-        content: const Text(
-          'Report this user for inappropriate behavior? Our team will review the report.',
-          style: TextStyle(color: HomePage.textMuted),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          backgroundColor: HomePage.surface,
+          title: const Text(
+            'Report User',
+            style: TextStyle(color: HomePage.textPrimary),
           ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              // TODO: Implement report functionality
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Report submitted')),
-              );
-            },
-            style: TextButton.styleFrom(foregroundColor: Colors.orange),
-            child: const Text('Report'),
+          content: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Why are you reporting this user?',
+                  style: TextStyle(color: HomePage.textMuted),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: selectedReason,
+                  dropdownColor: HomePage.surface,
+                  style: const TextStyle(color: HomePage.textPrimary),
+                  decoration: InputDecoration(
+                    labelText: 'Reason',
+                    labelStyle: const TextStyle(color: HomePage.textMuted),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: HomePage.line),
+                    ),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'spam', child: Text('Spam')),
+                    DropdownMenuItem(value: 'harassment', child: Text('Harassment')),
+                    DropdownMenuItem(
+                      value: 'inappropriate_content',
+                      child: Text('Inappropriate Content'),
+                    ),
+                    DropdownMenuItem(value: 'scam', child: Text('Scam')),
+                    DropdownMenuItem(value: 'other', child: Text('Other')),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) {
+                      setDialogState(() => selectedReason = value);
+                    }
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: detailsController,
+                  maxLines: 3,
+                  style: const TextStyle(color: HomePage.textPrimary),
+                  decoration: InputDecoration(
+                    labelText: 'Details',
+                    hintText: 'Please describe the issue...',
+                    labelStyle: const TextStyle(color: HomePage.textMuted),
+                    hintStyle: const TextStyle(color: HomePage.textMuted),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: HomePage.line),
+                    ),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.trim().length < 10) {
+                      return 'Please provide at least 10 characters';
+                    }
+                    return null;
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                Navigator.of(dialogContext).pop();
+                try {
+                  final uri = Uri.parse(
+                    '${AppConfig.apiBaseUrl}/moderation/report',
+                  ).replace(queryParameters: {'uid': _currentUid});
+                  final response = await http.post(
+                    uri,
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode({
+                      'reported_uid': _otherUid,
+                      'reason': selectedReason,
+                      'details': detailsController.text.trim(),
+                      'conversation_id': widget.conversation.id,
+                    }),
+                  );
+                  if (!mounted) return;
+                  if (response.statusCode == 200) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Report submitted. Our team will review it.'),
+                      ),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Failed to submit report: ${response.statusCode}',
+                        ),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error submitting report: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              },
+              style: TextButton.styleFrom(foregroundColor: Colors.orange),
+              child: const Text('Report'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showCompletionDialog() {
+    final hoursCtrl = TextEditingController(text: '1');
+    String skillLevel = 'intermediate';
+    final notesCtrl = TextEditingController();
+    bool submitting = false;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: HomePage.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: HomePage.line),
+          ),
+          title: const Text(
+            'Confirm Swap Completion',
+            style: TextStyle(
+              color: HomePage.textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: hoursCtrl,
+                  keyboardType: TextInputType.number,
+                  style: const TextStyle(color: HomePage.textPrimary),
+                  decoration: const InputDecoration(
+                    labelText: 'Hours spent',
+                    hintText: 'e.g. 2',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: skillLevel,
+                  dropdownColor: HomePage.surface,
+                  style: const TextStyle(color: HomePage.textPrimary),
+                  decoration: InputDecoration(
+                    labelText: 'Skill Level',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'beginner', child: Text('Beginner')),
+                    DropdownMenuItem(
+                        value: 'intermediate', child: Text('Intermediate')),
+                    DropdownMenuItem(value: 'advanced', child: Text('Advanced')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setDialogState(() => skillLevel = v);
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: notesCtrl,
+                  style: const TextStyle(color: HomePage.textPrimary),
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'Notes (optional)',
+                    hintText: 'How did the swap go?',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: submitting ? null : () => Navigator.of(ctx).pop(),
+              child: Text('Cancel',
+                  style: TextStyle(color: HomePage.textMuted)),
+            ),
+            FilledButton(
+              onPressed: submitting
+                  ? null
+                  : () async {
+                      final hours = double.tryParse(hoursCtrl.text.trim());
+                      if (hours == null || hours <= 0) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                              content: Text('Please enter valid hours.')),
+                        );
+                        return;
+                      }
+                      setDialogState(() => submitting = true);
+                      try {
+                        final updated = await SwapRequestService()
+                            .confirmCompletion(
+                          _swapRequest!.id,
+                          _currentUid,
+                          hours: hours,
+                          skillLevel: skillLevel,
+                          notes: notesCtrl.text.trim().isNotEmpty
+                              ? notesCtrl.text.trim()
+                              : null,
+                        );
+                        if (mounted) {
+                          setState(() => _swapRequest = updated);
+                          _loadMessages(silent: true);
+                        }
+                        if (ctx.mounted) Navigator.of(ctx).pop();
+                      } catch (e) {
+                        debugPrint('Confirm error: $e');
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Error: $e')),
+                          );
+                        }
+                      } finally {
+                        if (ctx.mounted) {
+                          setDialogState(() => submitting = false);
+                        }
+                      }
+                    },
+              style: FilledButton.styleFrom(
+                backgroundColor: HomePage.accent,
+                foregroundColor: Colors.white,
+              ),
+              child: submitting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Text('Confirm'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCompletionBanner() {
+    final sr = _swapRequest;
+    if (sr == null || _loadingSwapRequest) return const SizedBox.shrink();
+
+    // Only show for accepted or completed swaps
+    if (sr.status != SwapRequestStatus.accepted &&
+        sr.status != SwapRequestStatus.completed) {
+      return const SizedBox.shrink();
+    }
+
+    final isRequester = _currentUid == sr.requesterUid;
+    final iConfirmed =
+        isRequester ? sr.requesterConfirmed : sr.recipientConfirmed;
+    final theyConfirmed =
+        isRequester ? sr.recipientConfirmed : sr.requesterConfirmed;
+
+    final other = widget.conversation.otherParticipant;
+    final otherName = other?.displayName ?? 'the other user';
+
+    // Both confirmed / completed
+    if (sr.isCompleted) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        color: const Color(0xFF0D2818),
+        child: Row(
+          children: [
+            const Icon(Icons.check_circle, color: HomePage.success, size: 20),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'Swap completed! Points have been awarded.',
+                style: TextStyle(
+                  color: HomePage.success,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // I confirmed, waiting for them
+    if (iConfirmed && !theyConfirmed) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        color: const Color(0xFF1A1333),
+        child: Row(
+          children: [
+            const Icon(Icons.hourglass_top, color: HomePage.accentAlt, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Waiting for $otherName to confirm completion...',
+                style: const TextStyle(
+                  color: HomePage.accentAlt,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // They confirmed, I haven't
+    if (!iConfirmed && theyConfirmed) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        color: const Color(0xFF1A2B1A),
+        child: Row(
+          children: [
+            const Icon(Icons.celebration, color: Color(0xFFF59E0B), size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '$otherName has confirmed completion! Confirm your side to earn points.',
+                style: const TextStyle(
+                  color: Color(0xFFF59E0B),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              height: 30,
+              child: FilledButton(
+                onPressed: _showCompletionDialog,
+                style: FilledButton.styleFrom(
+                  backgroundColor: HomePage.success,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+                child: const Text('Confirm', style: TextStyle(fontSize: 12)),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Neither confirmed
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: HomePage.surface,
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Swap in progress. Done exchanging skills?',
+              style: TextStyle(
+                color: HomePage.textMuted,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            height: 32,
+            child: FilledButton.icon(
+              onPressed: _showCompletionDialog,
+              icon: const Icon(Icons.check_circle_outline, size: 16),
+              label: const Text('Mark Complete', style: TextStyle(fontSize: 12)),
+              style: FilledButton.styleFrom(
+                backgroundColor: HomePage.accent,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+              ),
+            ),
           ),
         ],
       ),
@@ -322,6 +775,7 @@ class _ChatPageState extends State<ChatPage> {
       ),
       body: Column(
         children: [
+          _buildCompletionBanner(),
           Expanded(child: _buildMessageList()),
           MessageInput(
             controller: _messageController,

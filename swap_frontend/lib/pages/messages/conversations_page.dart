@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 import '../home_page.dart';
+import '../../services/b2c_auth_service.dart';
 import '../../models/conversation.dart';
 import '../../services/messaging_service.dart';
 import '../../widgets/app_sidebar.dart';
@@ -25,7 +25,7 @@ class _ConversationsPageState extends State<ConversationsPage> {
   String? _error;
   Timer? _refreshTimer;
 
-  String? get _currentUid => FirebaseAuth.instance.currentUser?.uid;
+  String? get _currentUid => B2CAuthService.instance.currentUser?.uid;
 
   @override
   void initState() {

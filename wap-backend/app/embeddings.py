@@ -32,6 +32,7 @@ class EmbeddingService:
         response = self.client.embeddings.create(
             input=text,
             model=self.deployment,
+            dimensions=self.dimension,
         )
         return response.data[0].embedding
 
@@ -48,6 +49,7 @@ class EmbeddingService:
         response = self.client.embeddings.create(
             input=texts,
             model=self.deployment,
+            dimensions=self.dimension,
         )
         return [item.embedding for item in response.data]
 

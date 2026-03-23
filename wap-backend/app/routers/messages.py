@@ -2,9 +2,7 @@
 
 from typing import Optional, List
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from fastapi import APIRouter, HTTPException, Query
-from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.schemas import (
     MessageCreate,
@@ -17,7 +15,7 @@ from app.schemas import (
     SwapRequestStatus,
     MessageType,
 )
-from app.firebase_db import get_firebase_service
+from app.cosmos_db import get_cosmos_service
 from app.email_service import get_email_service
 from app.cache import get_cache_service
 
@@ -25,7 +23,7 @@ router = APIRouter(prefix="/conversations", tags=["messaging"])
 
 
 def _convert_timestamp(value) -> Optional[str]:
-    """Convert a Firestore timestamp to ISO string."""
+    """Convert a timestamp to ISO string."""
     if value is None:
         return None
     if hasattr(value, "isoformat"):
@@ -38,12 +36,10 @@ def _get_other_participant(participant_uids: List[str], current_uid: str) -> Opt
     other_uid = next((uid for uid in participant_uids if uid != current_uid), None)
     if not other_uid:
         return None
-
-    firebase = get_firebase_service()
-    profile = firebase.get_profile(other_uid)
+    cosmos = get_cosmos_service()
+    profile = cosmos.get_profile(other_uid)
     if not profile:
         return None
-
     return OtherParticipant(
         uid=other_uid,
         display_name=profile.get("display_name"),
@@ -52,61 +48,33 @@ def _get_other_participant(participant_uids: List[str], current_uid: str) -> Opt
     )
 
 
-def _check_conversation_access(conversation_data: dict, uid: str) -> bool:
-    """Check if user has access to the conversation."""
-    return uid in conversation_data.get("participant_uids", [])
+def _build_conversation_response(data: dict, uid: str) -> ConversationResponse:
+    """Build a ConversationResponse from a Cosmos document."""
+    unread_counts = data.get("unread_counts", {})
+    unread_count = unread_counts.get(uid, 0)
 
+    last_message = None
+    if data.get("last_message"):
+        lm = data["last_message"]
+        last_message = LastMessage(
+            content=lm.get("content", ""),
+            sender_uid=lm.get("sender_uid", ""),
+            sent_at=_convert_timestamp(lm.get("sent_at")) or datetime.utcnow().isoformat(),
+        )
 
-def _validate_can_send_message(db, conversation_id: str, sender_uid: str) -> dict:
-    """
-    Validate that the user can send a message in this conversation.
+    other_participant = _get_other_participant(data.get("participant_uids", []), uid)
 
-    Returns the conversation data if valid.
-    Raises HTTPException if invalid.
-    """
-    # Get conversation
-    conv_ref = db.collection("conversations").document(conversation_id)
-    conv_doc = conv_ref.get()
-
-    if not conv_doc.exists:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    conv_data = conv_doc.to_dict()
-
-    # Check user is participant
-    if sender_uid not in conv_data.get("participant_uids", []):
-        raise HTTPException(status_code=403, detail="Not a participant in this conversation")
-
-    # Check conversation is active
-    if conv_data.get("status") == ConversationStatus.blocked.value:
-        raise HTTPException(status_code=403, detail="This conversation has been blocked")
-
-    # Check swap request is accepted
-    swap_request_id = conv_data.get("swap_request_id")
-    if swap_request_id:
-        swap_ref = db.collection("swap_requests").document(swap_request_id)
-        swap_doc = swap_ref.get()
-        if swap_doc.exists:
-            swap_data = swap_doc.to_dict()
-            if swap_data.get("status") != SwapRequestStatus.accepted.value:
-                raise HTTPException(status_code=403, detail="Swap request is no longer accepted")
-
-    return conv_data
-
-
-def _fetch_conversations_for_user(db, uid: str) -> List:
-    """Fetch conversations from Firestore with timeout protection."""
-    query = db.collection("conversations").where(
-        filter=FieldFilter("participant_uids", "array_contains", uid)
+    return ConversationResponse(
+        id=data["id"],
+        participant_uids=data.get("participant_uids", []),
+        swap_request_id=data.get("swap_request_id", ""),
+        created_at=_convert_timestamp(data.get("created_at")) or datetime.utcnow().isoformat(),
+        updated_at=_convert_timestamp(data.get("updated_at")) or datetime.utcnow().isoformat(),
+        last_message=last_message,
+        unread_count=unread_count,
+        status=ConversationStatus(data.get("status", "active")),
+        other_participant=other_participant,
     )
-    
-    all_docs = []
-    for doc in query.stream():
-        data = doc.to_dict()
-        # Filter: only active conversations
-        if data.get("status") == ConversationStatus.active.value:
-            all_docs.append(doc)
-    return all_docs
 
 
 @router.get("", response_model=ConversationListResponse)
@@ -123,93 +91,36 @@ def list_conversations(
     - Enriches with other participant's profile info
     - Excludes blocked conversations
     """
-    print(f"list_conversations called for uid={uid}")
-    
-    # TEMPORARY: Return empty list to avoid Firestore index issues
-    # TODO: Create composite index in Firebase Console for production
-    return ConversationListResponse(conversations=[], total=0, has_more=False)
-    
-    # Original code commented out until index is created:
-    # firebase = get_firebase_service()
-    # db = firebase.db
-    # ... rest of code ...
-    
-    # Sort by updated_at descending (newest first)
-    all_docs.sort(
-        key=lambda d: d.to_dict().get("updated_at") or datetime.min,
-        reverse=True
-    )
-    total = len(all_docs)
+    cosmos = get_cosmos_service()
+    all_docs = cosmos.query_conversations_for_user(uid)
 
-    # Apply pagination
-    paginated_docs = all_docs[offset:offset + limit]
+    # Filter to active conversations only
+    active = [d for d in all_docs if d.get("status") == ConversationStatus.active.value]
+
+    # Sort by updated_at descending
+    active.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
+
+    total = len(active)
+    paginated = active[offset: offset + limit]
     has_more = (offset + limit) < total
 
-    conversations = []
-    for doc in paginated_docs:
-        data = doc.to_dict()
-        data["id"] = doc.id
+    conversations = [_build_conversation_response(d, uid) for d in paginated]
 
-        # Get unread count for this user
-        unread_counts = data.get("unread_counts", {})
-        unread_count = unread_counts.get(uid, 0)
-
-        # Parse last message
-        last_message = None
-        if data.get("last_message"):
-            lm = data["last_message"]
-            last_message = LastMessage(
-                content=lm.get("content", ""),
-                sender_uid=lm.get("sender_uid", ""),
-                sent_at=_convert_timestamp(lm.get("sent_at")) or datetime.utcnow().isoformat(),
-            )
-
-        # Get other participant
-        other_participant = _get_other_participant(data.get("participant_uids", []), uid)
-
-        conversations.append(ConversationResponse(
-            id=data["id"],
-            participant_uids=data.get("participant_uids", []),
-            swap_request_id=data.get("swap_request_id", ""),
-            created_at=_convert_timestamp(data.get("created_at")) or datetime.utcnow().isoformat(),
-            updated_at=_convert_timestamp(data.get("updated_at")) or datetime.utcnow().isoformat(),
-            last_message=last_message,
-            unread_count=unread_count,
-            status=ConversationStatus(data.get("status", "active")),
-            other_participant=other_participant,
-        ))
-
-    return ConversationListResponse(
-        conversations=conversations,
-        total=total,
-        has_more=has_more,
-    )
-
-
-def _count_unread_for_user(db, uid: str) -> int:
-    """Count unread messages from Firestore with timeout protection."""
-    query = db.collection("conversations").where(
-        filter=FieldFilter("participant_uids", "array_contains", uid)
-    )
-    
-    total_unread = 0
-    for doc in query.stream():
-        data = doc.to_dict()
-        # Filter: only count active conversations
-        if data.get("status") == ConversationStatus.active.value:
-            unread_counts = data.get("unread_counts", {})
-            total_unread += unread_counts.get(uid, 0)
-    return total_unread
+    return ConversationListResponse(conversations=conversations, total=total, has_more=has_more)
 
 
 @router.get("/unread-count")
 def get_total_unread(uid: str = Query(..., description="UID of the user")):
     """Get total unread message count across all conversations."""
-    print(f"get_total_unread called for uid={uid}")
-    
-    # TEMPORARY: Return 0 to avoid Firestore index issues
-    # TODO: Create composite index in Firebase Console for production
-    return {"total_unread": 0}
+    cosmos = get_cosmos_service()
+    all_docs = cosmos.query_conversations_for_user(uid)
+
+    total_unread = sum(
+        d.get("unread_counts", {}).get(uid, 0)
+        for d in all_docs
+        if d.get("status") == ConversationStatus.active.value
+    )
+    return {"total_unread": total_unread}
 
 
 @router.get("/{conversation_id}", response_model=ConversationResponse)
@@ -218,50 +129,16 @@ def get_conversation(
     uid: str = Query(..., description="UID of the requesting user"),
 ):
     """Get a single conversation by ID."""
-    firebase = get_firebase_service()
-    db = firebase.db
+    cosmos = get_cosmos_service()
 
-    doc_ref = db.collection("conversations").document(conversation_id)
-    doc = doc_ref.get()
-
-    if not doc.exists:
+    data = cosmos.get_conversation(conversation_id)
+    if not data:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    data = doc.to_dict()
-    data["id"] = doc.id
-
-    # Check access
-    if not _check_conversation_access(data, uid):
+    if uid not in data.get("participant_uids", []):
         raise HTTPException(status_code=403, detail="Not authorized to view this conversation")
 
-    # Get unread count
-    unread_counts = data.get("unread_counts", {})
-    unread_count = unread_counts.get(uid, 0)
-
-    # Parse last message
-    last_message = None
-    if data.get("last_message"):
-        lm = data["last_message"]
-        last_message = LastMessage(
-            content=lm.get("content", ""),
-            sender_uid=lm.get("sender_uid", ""),
-            sent_at=_convert_timestamp(lm.get("sent_at")) or datetime.utcnow().isoformat(),
-        )
-
-    # Get other participant
-    other_participant = _get_other_participant(data.get("participant_uids", []), uid)
-
-    return ConversationResponse(
-        id=data["id"],
-        participant_uids=data.get("participant_uids", []),
-        swap_request_id=data.get("swap_request_id", ""),
-        created_at=_convert_timestamp(data.get("created_at")) or datetime.utcnow().isoformat(),
-        updated_at=_convert_timestamp(data.get("updated_at")) or datetime.utcnow().isoformat(),
-        last_message=last_message,
-        unread_count=unread_count,
-        status=ConversationStatus(data.get("status", "active")),
-        other_participant=other_participant,
-    )
+    return _build_conversation_response(data, uid)
 
 
 @router.get("/{conversation_id}/messages", response_model=List[MessageResponse])
@@ -277,48 +154,29 @@ def get_messages(
     - Returns messages sorted by sent_at descending (newest first)
     - Use 'before' parameter for pagination (pass the oldest message's sent_at)
     """
-    firebase = get_firebase_service()
-    db = firebase.db
+    cosmos = get_cosmos_service()
 
-    # Validate access
-    conv_ref = db.collection("conversations").document(conversation_id)
-    conv_doc = conv_ref.get()
-
-    if not conv_doc.exists:
+    conv = cosmos.get_conversation(conversation_id)
+    if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-
-    conv_data = conv_doc.to_dict()
-    if not _check_conversation_access(conv_data, uid):
+    if uid not in conv.get("participant_uids", []):
         raise HTTPException(status_code=403, detail="Not authorized to view this conversation")
 
-    # Query messages
-    messages_ref = conv_ref.collection("messages")
-    query = messages_ref.order_by("sent_at", direction="DESCENDING")
+    messages = cosmos.get_messages(conversation_id, limit=limit, before=before)
 
-    if before:
-        try:
-            before_dt = datetime.fromisoformat(before.replace("Z", "+00:00"))
-            query = query.where(filter=FieldFilter("sent_at", "<", before_dt))
-        except ValueError:
-            pass  # Ignore invalid timestamp
-
-    query = query.limit(limit)
-
-    messages = []
-    for doc in query.stream():
-        data = doc.to_dict()
-        messages.append(MessageResponse(
-            id=doc.id,
+    return [
+        MessageResponse(
+            id=m["id"],
             conversation_id=conversation_id,
-            sender_uid=data.get("sender_uid", ""),
-            content=data.get("content", ""),
-            sent_at=_convert_timestamp(data.get("sent_at")) or datetime.utcnow().isoformat(),
-            read_at=_convert_timestamp(data.get("read_at")),
-            read_by=data.get("read_by", []),
-            type=MessageType(data.get("type", "text")),
-        ))
-
-    return messages
+            sender_uid=m.get("sender_uid", ""),
+            content=m.get("content", ""),
+            sent_at=_convert_timestamp(m.get("sent_at")) or datetime.utcnow().isoformat(),
+            read_at=_convert_timestamp(m.get("read_at")),
+            read_by=m.get("read_by", []),
+            type=MessageType(m.get("type", "text")),
+        )
+        for m in messages
+    ]
 
 
 @router.post("/{conversation_id}/messages", response_model=MessageResponse)
@@ -334,54 +192,66 @@ def send_message(
     - Validates conversation is active
     - Validates associated swap request is accepted
     - Updates conversation's last_message and unread_counts
-    - Sends email notification to recipient (with debouncing)
+    - Sends email notification to recipient
     """
-    firebase = get_firebase_service()
+    cosmos = get_cosmos_service()
     email_service = get_email_service()
-    db = firebase.db
 
-    # Validate can send message
-    conv_data = _validate_can_send_message(db, conversation_id, uid)
+    conv = cosmos.get_conversation(conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
-    now = datetime.utcnow()
+    if uid not in conv.get("participant_uids", []):
+        raise HTTPException(status_code=403, detail="Not a participant in this conversation")
 
-    # Create message
-    message_doc = {
-        "sender_uid": uid,
-        "content": message.content,
-        "sent_at": now,
-        "read_at": None,
-        "read_by": [uid],  # Sender has read it
-        "type": MessageType.text.value,
-    }
+    if conv.get("status") == ConversationStatus.blocked.value:
+        raise HTTPException(status_code=403, detail="This conversation has been blocked")
 
-    conv_ref = db.collection("conversations").document(conversation_id)
-    msg_ref = conv_ref.collection("messages").document()
-    msg_ref.set(message_doc)
+    # Validate swap request is still accepted
+    swap_request_id = conv.get("swap_request_id")
+    if swap_request_id:
+        swap = cosmos.get_swap_request_by_id(swap_request_id)
+        if swap and swap.get("status") != SwapRequestStatus.accepted.value:
+            raise HTTPException(status_code=403, detail="Swap request is no longer accepted")
 
-    # Update conversation
-    participant_uids = conv_data.get("participant_uids", [])
+    now = datetime.utcnow().isoformat()
+
+    msg = cosmos.create_message(
+        conversation_id=conversation_id,
+        data={
+            "sender_uid": uid,
+            "content": message.content,
+            "sent_at": now,
+            "read_at": None,
+            "read_by": [uid],
+            "type": MessageType.text.value,
+        },
+    )
+
+    # Update conversation unread counts + last_message
+    participant_uids = conv.get("participant_uids", [])
     other_uid = next((u for u in participant_uids if u != uid), None)
 
-    unread_counts = conv_data.get("unread_counts", {})
+    unread_counts = dict(conv.get("unread_counts", {}))
     if other_uid:
         unread_counts[other_uid] = unread_counts.get(other_uid, 0) + 1
 
-    conv_ref.update({
-        "last_message": {
-            "content": message.content[:100],  # Truncate for preview
-            "sender_uid": uid,
-            "sent_at": now,
+    cosmos.update_conversation(
+        conversation_id=conversation_id,
+        update_data={
+            "last_message": {
+                "content": message.content[:100],
+                "sender_uid": uid,
+                "sent_at": now,
+            },
+            "unread_counts": unread_counts,
         },
-        "updated_at": now,
-        "unread_counts": unread_counts,
-    })
+    )
 
-    # Send email notification to other participant (with debouncing)
+    # Email notification to other participant
     if other_uid:
-        other_profile = firebase.get_profile(other_uid)
-        sender_profile = firebase.get_profile(uid)
-
+        other_profile = cosmos.get_profile(other_uid)
+        sender_profile = cosmos.get_profile(uid)
         if other_profile and other_profile.get("email_updates", True) and other_profile.get("email"):
             email_service.send_new_message_notification(
                 to_email=other_profile["email"],
@@ -393,11 +263,11 @@ def send_message(
             )
 
     return MessageResponse(
-        id=msg_ref.id,
+        id=msg["id"],
         conversation_id=conversation_id,
         sender_uid=uid,
         content=message.content,
-        sent_at=now.isoformat(),
+        sent_at=now,
         read_at=None,
         read_by=[uid],
         type=MessageType.text,
@@ -415,42 +285,29 @@ def mark_conversation_read(
     - Updates all unread messages with read_at and read_by
     - Resets unread_count for this user to 0
     """
-    firebase = get_firebase_service()
-    db = firebase.db
+    cosmos = get_cosmos_service()
 
-    # Get conversation
-    conv_ref = db.collection("conversations").document(conversation_id)
-    conv_doc = conv_ref.get()
-
-    if not conv_doc.exists:
+    conv = cosmos.get_conversation(conversation_id)
+    if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conv_data = conv_doc.to_dict()
-
-    # Check access
-    if not _check_conversation_access(conv_data, uid):
+    if uid not in conv.get("participant_uids", []):
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    now = datetime.utcnow()
+    now = datetime.utcnow().isoformat()
 
-    # Update unread messages (those not sent by this user and not read by them)
-    messages_ref = conv_ref.collection("messages")
+    all_messages = cosmos.get_all_messages_in_conversation(conversation_id)
+    for msg in all_messages:
+        read_by = msg.get("read_by", [])
+        if uid not in read_by and msg.get("sender_uid") != uid:
+            cosmos.update_message(
+                conversation_id=conversation_id,
+                message_id=msg["id"],
+                data={"read_by": read_by + [uid], "read_at": now},
+            )
 
-    # Get messages not read by this user
-    for doc in messages_ref.stream():
-        data = doc.to_dict()
-        read_by = data.get("read_by", [])
-
-        if uid not in read_by and data.get("sender_uid") != uid:
-            read_by.append(uid)
-            doc.reference.update({
-                "read_by": read_by,
-                "read_at": now,
-            })
-
-    # Reset unread count
-    unread_counts = conv_data.get("unread_counts", {})
+    unread_counts = dict(conv.get("unread_counts", {}))
     unread_counts[uid] = 0
-    conv_ref.update({"unread_counts": unread_counts})
+    cosmos.update_conversation(conversation_id, {"unread_counts": unread_counts})
 
     return {"message": "Marked as read", "conversation_id": conversation_id}

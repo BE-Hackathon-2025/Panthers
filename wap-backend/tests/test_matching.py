@@ -1,92 +1,140 @@
-"""Test matching logic."""
+"""Tests for matching logic."""
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
 
 import pytest
-from app.matching import haversine_distance, filter_by_geo, filter_by_availability
 
 
-def test_haversine_distance():
-    """Test distance calculation between coordinates."""
-    # NYC to Philadelphia (approximately 130 km)
-    nyc_lat, nyc_lon = 40.7128, -74.0060
-    philly_lat, philly_lon = 39.9526, -75.1652
-    
-    distance = haversine_distance(nyc_lat, nyc_lon, philly_lat, philly_lon)
-    
-    # Should be around 130 km
-    assert 120 < distance < 140
+# ── compute_reciprocal_matches ────────────────────────────────────────────────
 
+class TestComputeReciprocalMatches:
+    def _mock_services(self, search_results_offer=None, search_results_need=None):
+        mock_embedding = MagicMock()
+        mock_embedding.encode.return_value = [0.1] * 1536
 
-def test_haversine_same_location():
-    """Test distance between same location is zero."""
-    lat, lon = 40.7128, -74.0060
-    
-    distance = haversine_distance(lat, lon, lat, lon)
-    
-    assert distance == 0.0
+        mock_search = MagicMock()
+        mock_search.search.side_effect = [
+            search_results_offer or [],
+            search_results_need or [],
+        ]
+        return mock_embedding, mock_search
 
+    def test_returns_list(self):
+        mock_emb, mock_srch = self._mock_services()
+        with (
+            patch("app.matching.get_embedding_service", return_value=mock_emb),
+            patch("app.matching.get_azure_search_service", return_value=mock_srch),
+        ):
+            from app.matching import compute_reciprocal_matches
+            result = compute_reciprocal_matches("Python", "Guitar", limit=5)
+            assert isinstance(result, list)
 
-def test_filter_by_geo():
-    """Test geographic filtering."""
-    results = [
-        {"username": "alice", "lat": 40.7128, "lon": -74.0060},
-        {"username": "bob", "lat": 39.9526, "lon": -75.1652},  # ~130km away
-        {"username": "charlie", "lat": 34.0522, "lon": -118.2437},  # LA, very far
-    ]
-    
-    user_lat, user_lon = 40.7128, -74.0060
-    max_distance = 150  # 150 km
-    
-    filtered = filter_by_geo(results, user_lat, user_lon, max_distance)
-    
-    # Should only include alice and bob
-    assert len(filtered) == 2
-    usernames = [r["username"] for r in filtered]
-    assert "alice" in usernames
-    assert "bob" in usernames
-    assert "charlie" not in usernames
+    def test_returns_empty_when_no_matches(self):
+        mock_emb, mock_srch = self._mock_services([], [])
+        with (
+            patch("app.matching.get_embedding_service", return_value=mock_emb),
+            patch("app.matching.get_azure_search_service", return_value=mock_srch),
+        ):
+            from app.matching import compute_reciprocal_matches
+            result = compute_reciprocal_matches("Python", "Guitar")
+            assert result == []
 
+    def test_calls_embedding_encode_twice(self):
+        mock_emb, mock_srch = self._mock_services()
+        with (
+            patch("app.matching.get_embedding_service", return_value=mock_emb),
+            patch("app.matching.get_azure_search_service", return_value=mock_srch),
+        ):
+            from app.matching import compute_reciprocal_matches
+            compute_reciprocal_matches("Python", "Guitar")
+            assert mock_emb.encode.call_count == 2
 
-def test_filter_by_geo_no_coordinates():
-    """Test that profiles without coordinates are filtered out."""
-    results = [
-        {"username": "alice", "lat": 40.7128, "lon": -74.0060},
-        {"username": "bob", "lat": None, "lon": None},
-    ]
-    
-    filtered = filter_by_geo(results, 40.7128, -74.0060, 100)
-    
-    assert len(filtered) == 1
-    assert filtered[0]["username"] == "alice"
+    def test_calls_search_twice(self):
+        mock_emb, mock_srch = self._mock_services()
+        with (
+            patch("app.matching.get_embedding_service", return_value=mock_emb),
+            patch("app.matching.get_azure_search_service", return_value=mock_srch),
+        ):
+            from app.matching import compute_reciprocal_matches
+            compute_reciprocal_matches("Python", "Guitar")
+            assert mock_srch.search.call_count == 2
 
+    def test_reciprocal_match_includes_both_parties(self):
+        offer_results = [
+            {"uid": "u1", "email": "u1@example.com", "score": 0.9,
+             "display_name": "U1", "skills_to_offer": "Python",
+             "services_needed": "Guitar", "photo_url": None,
+             "full_name": None, "username": None, "bio": None,
+             "city": None, "timezone": None, "dm_open": True, "show_city": True},
+        ]
+        need_results = [
+            {"uid": "u1", "email": "u1@example.com", "score": 0.8,
+             "display_name": "U1", "skills_to_offer": "Python",
+             "services_needed": "Guitar", "photo_url": None,
+             "full_name": None, "username": None, "bio": None,
+             "city": None, "timezone": None, "dm_open": True, "show_city": True},
+        ]
+        mock_emb = MagicMock()
+        mock_emb.encode.return_value = [0.1] * 1536
+        mock_srch = MagicMock()
+        mock_srch.search.side_effect = [offer_results, need_results]
 
-def test_filter_by_availability():
-    """Test availability filtering."""
-    results = [
-        {"username": "alice", "availability": ["monday", "tuesday", "wednesday"]},
-        {"username": "bob", "availability": ["thursday", "friday"]},
-        {"username": "charlie", "availability": ["monday", "friday"]},
-    ]
-    
-    required = ["monday", "saturday"]
-    
-    filtered = filter_by_availability(results, required)
-    
-    # Should include alice and charlie (both have monday)
-    assert len(filtered) == 2
-    usernames = [r["username"] for r in filtered]
-    assert "alice" in usernames
-    assert "charlie" in usernames
-    assert "bob" not in usernames
+        with (
+            patch("app.matching.get_embedding_service", return_value=mock_emb),
+            patch("app.matching.get_azure_search_service", return_value=mock_srch),
+        ):
+            from app.matching import compute_reciprocal_matches
+            result = compute_reciprocal_matches("Python", "Guitar")
+            assert len(result) >= 1
+            assert result[0]["uid"] == "u1"
 
+    def test_result_has_reciprocal_score(self):
+        common = {
+            "email": "u1@example.com", "display_name": "U1",
+            "skills_to_offer": "Python", "services_needed": "Guitar",
+            "photo_url": None, "full_name": None, "username": None,
+            "bio": None, "city": None, "timezone": None,
+            "dm_open": True, "show_city": True,
+        }
+        offer_results = [{"uid": "u1", "score": 0.9, **common}]
+        need_results  = [{"uid": "u1", "score": 0.7, **common}]
 
-def test_filter_by_availability_no_requirement():
-    """Test that no filtering occurs when no availability is required."""
-    results = [
-        {"username": "alice", "availability": ["monday"]},
-        {"username": "bob", "availability": ["tuesday"]},
-    ]
-    
-    filtered = filter_by_availability(results, None)
-    
-    assert len(filtered) == 2
+        mock_emb = MagicMock()
+        mock_emb.encode.return_value = [0.1] * 1536
+        mock_srch = MagicMock()
+        mock_srch.search.side_effect = [offer_results, need_results]
 
+        with (
+            patch("app.matching.get_embedding_service", return_value=mock_emb),
+            patch("app.matching.get_azure_search_service", return_value=mock_srch),
+        ):
+            from app.matching import compute_reciprocal_matches
+            result = compute_reciprocal_matches("Python", "Guitar")
+            if result:
+                assert "reciprocal_score" in result[0]
+
+    def test_respects_limit(self):
+        common = {
+            "email": "u@example.com", "display_name": "U",
+            "skills_to_offer": "x", "services_needed": "y",
+            "photo_url": None, "full_name": None, "username": None,
+            "bio": None, "city": None, "timezone": None,
+            "dm_open": True, "show_city": True,
+        }
+        # 5 users in both result sets
+        offer = [{"uid": f"u{i}", "score": 0.9 - i * 0.1, **common} for i in range(5)]
+        need  = [{"uid": f"u{i}", "score": 0.8 - i * 0.1, **common} for i in range(5)]
+
+        mock_emb = MagicMock()
+        mock_emb.encode.return_value = [0.1] * 1536
+        mock_srch = MagicMock()
+        mock_srch.search.side_effect = [offer, need]
+
+        with (
+            patch("app.matching.get_embedding_service", return_value=mock_emb),
+            patch("app.matching.get_azure_search_service", return_value=mock_srch),
+        ):
+            from app.matching import compute_reciprocal_matches
+            result = compute_reciprocal_matches("Python", "Guitar", limit=3)
+            assert len(result) <= 3

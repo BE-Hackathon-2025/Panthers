@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas import ReciprocalMatchResult
 from app.matching import compute_reciprocal_matches
-from app.firebase_db import get_firebase_service
+from app.cosmos_db import get_cosmos_service
 from app.email_service import get_email_service
 
 router = APIRouter(prefix="/match", tags=["matching"])
@@ -64,11 +64,11 @@ def find_reciprocal_matches(request: ReciprocalMatchRequest):
 
 def _send_match_notifications(my_uid: str, matches: List[dict]):
     """Send email notifications to high-score matches."""
-    firebase_service = get_firebase_service()
+    cosmos = get_cosmos_service()
     email_service = get_email_service()
 
     # Get the requesting user's profile
-    my_profile = firebase_service.get_profile(my_uid)
+    my_profile = cosmos.get_profile(my_uid)
     if not my_profile:
         return
 
@@ -89,7 +89,7 @@ def _send_match_notifications(my_uid: str, matches: List[dict]):
             continue
 
         # Get match's full profile for email preference
-        match_profile = firebase_service.get_profile(match_uid)
+        match_profile = cosmos.get_profile(match_uid)
         if not match_profile:
             continue
 

@@ -2,11 +2,15 @@
 import 'package:flutter/material.dart';
 import '../pages/post_skill_page.dart';
 import '../pages/home_page.dart';
+import '../pages/landing_page.dart';
 import '../pages/profile_page.dart';
 import '../pages/request_page.dart';
+import '../pages/wallet_page.dart';
 import '../pages/messages/conversations_page.dart';
+import '../services/b2c_auth_service.dart';
+import '../services/messaging_service.dart';
 
-class AppSidebar extends StatelessWidget {
+class AppSidebar extends StatefulWidget {
   const AppSidebar({super.key, this.active = 'Home'});
 
   final String active;
@@ -14,11 +18,39 @@ class AppSidebar extends StatelessWidget {
   static const double width = 240;
 
   @override
+  State<AppSidebar> createState() => _AppSidebarState();
+}
+
+class _AppSidebarState extends State<AppSidebar> {
+  final _messagingService = MessagingService();
+  int _unreadCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchUnreadCount();
+  }
+
+  Future<void> _fetchUnreadCount() async {
+    final uid = B2CAuthService.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return;
+    try {
+      final count = await _messagingService.getTotalUnreadCount(uid);
+      if (mounted) {
+        setState(() => _unreadCount = count);
+      }
+    } catch (e) {
+      debugPrint('Error fetching unread count: $e');
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    bool isActive(String label) => active.toLowerCase() == label.toLowerCase();
+    bool isActive(String label) =>
+        widget.active.toLowerCase() == label.toLowerCase();
 
     return Container(
-      width: width,
+      width: AppSidebar.width,
       decoration: BoxDecoration(
         color: HomePage.sidebar,
         border: Border(right: BorderSide(color: HomePage.line)),
@@ -60,7 +92,6 @@ class AppSidebar extends StatelessWidget {
           _NavItem(
             icon: Icons.inbox_outlined,
             label: 'Requests',
-            badge: '2',
             active: isActive('Requests'),
             onTap: () => Navigator.of(
               context,
@@ -69,6 +100,7 @@ class AppSidebar extends StatelessWidget {
           _NavItem(
             icon: Icons.chat_bubble_outline,
             label: 'Messages',
+            badge: _unreadCount > 0 ? '$_unreadCount' : null,
             active: isActive('Messages'),
             onTap: () => Navigator.of(
               context,
@@ -78,6 +110,9 @@ class AppSidebar extends StatelessWidget {
             icon: Icons.analytics_outlined,
             label: 'Dashboard',
             active: isActive('Dashboard'),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const WalletPage()),
+            ),
           ),
           _NavItem(
             icon: Icons.person_outline,
@@ -88,6 +123,19 @@ class AppSidebar extends StatelessWidget {
             ).push(MaterialPageRoute(builder: (_) => const ProfilePage())),
           ),
           const Spacer(),
+          _NavItem(
+            icon: Icons.logout_rounded,
+            label: 'Log Out',
+            onTap: () async {
+              await B2CAuthService.instance.signOut();
+              if (!context.mounted) return;
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const LandingPage()),
+                (route) => false,
+              );
+            },
+          ),
+          const SizedBox(height: 4),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Container(

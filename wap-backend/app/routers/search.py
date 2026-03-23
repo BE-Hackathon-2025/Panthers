@@ -1,12 +1,12 @@
 """Search endpoints."""
 
-from typing import List, Literal, Dict, Any
+from typing import List, Literal, Dict, Any, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from app.schemas import ProfileSearchResult
+from app.schemas import ProfileSearchResult, SkillSearchResult
 from app.embeddings import get_embedding_service
-from app.azure_search import get_azure_search_service
+from app.azure_search import get_azure_search_service, get_skills_search_service
 from app.cache import get_cache_service
 
 router = APIRouter(prefix="/search", tags=["search"])
@@ -115,6 +115,44 @@ def search_profiles(request: SearchRequest):
     cache_service.set(cache_key, combined_list, ttl=3600)
     
     return [ProfileSearchResult(**result) for result in combined_list]
+
+
+class SkillSearchRequest(BaseModel):
+    """Request model for skill-centric search."""
+    query: str = Field(..., min_length=1, description="Search query")
+    limit: int = Field(10, ge=1, le=100, description="Max results")
+    category: Optional[str] = Field(None, description="Filter by category")
+
+
+@router.post("/skills", response_model=List[SkillSearchResult])
+def search_skills(request: SkillSearchRequest):
+    """
+    Semantic search for individual skills (skill-centric marketplace).
+
+    Returns skill cards with poster info denormalized.
+    """
+    cache_service = get_cache_service()
+    embedding_service = get_embedding_service()
+    skills_search = get_skills_search_service()
+
+    cache_key = cache_service._generate_key(
+        "skill_search",
+        {"query": request.query, "limit": request.limit, "category": request.category or ""},
+    )
+
+    cached = cache_service.get(cache_key)
+    if cached:
+        return [SkillSearchResult(**r) for r in cached]
+
+    query_vec = embedding_service.encode(request.query)
+    results = skills_search.search_skills(
+        query_vec=query_vec,
+        limit=request.limit,
+        category_filter=request.category,
+    )
+
+    cache_service.set(cache_key, results, ttl=3600)
+    return [SkillSearchResult(**r) for r in results]
 
 
 class SkillRecommendationRequest(BaseModel):

@@ -1,6 +1,6 @@
 /// Models for swap requests.
 
-enum SwapRequestStatus { pending, accepted, declined, cancelled }
+enum SwapRequestStatus { pending, accepted, declined, cancelled, completed }
 
 /// Minimal profile info for swap request participants.
 class SwapParticipant {
@@ -46,6 +46,10 @@ class SwapRequest {
   final String? conversationId;
   final SwapParticipant? requesterProfile;
   final SwapParticipant? recipientProfile;
+  final bool requesterConfirmed;
+  final bool recipientConfirmed;
+  final String? requesterOfferSkillId;
+  final String? requesterNeedSkillId;
 
   SwapRequest({
     required this.id,
@@ -61,6 +65,10 @@ class SwapRequest {
     this.conversationId,
     this.requesterProfile,
     this.recipientProfile,
+    this.requesterConfirmed = false,
+    this.recipientConfirmed = false,
+    this.requesterOfferSkillId,
+    this.requesterNeedSkillId,
   });
 
   factory SwapRequest.fromJson(Map<String, dynamic> json) => SwapRequest(
@@ -89,6 +97,10 @@ class SwapRequest {
             ? SwapParticipant.fromJson(
                 json['recipient_profile'] as Map<String, dynamic>)
             : null,
+        requesterConfirmed: json['requester_confirmed'] as bool? ?? false,
+        recipientConfirmed: json['recipient_confirmed'] as bool? ?? false,
+        requesterOfferSkillId: json['requester_offer_skill_id'] as String?,
+        requesterNeedSkillId: json['requester_need_skill_id'] as String?,
       );
 
   static SwapRequestStatus _parseStatus(String? status) {
@@ -99,6 +111,8 @@ class SwapRequest {
         return SwapRequestStatus.declined;
       case 'cancelled':
         return SwapRequestStatus.cancelled;
+      case 'completed':
+        return SwapRequestStatus.completed;
       default:
         return SwapRequestStatus.pending;
     }
@@ -116,6 +130,10 @@ class SwapRequest {
         'updated_at': updatedAt.toIso8601String(),
         'responded_at': respondedAt?.toIso8601String(),
         'conversation_id': conversationId,
+        'requester_confirmed': requesterConfirmed,
+        'recipient_confirmed': recipientConfirmed,
+        'requester_offer_skill_id': requesterOfferSkillId,
+        'requester_need_skill_id': requesterNeedSkillId,
       };
 
   /// Whether this request is pending and awaiting a response.
@@ -129,4 +147,7 @@ class SwapRequest {
 
   /// Whether this request was cancelled.
   bool get isCancelled => status == SwapRequestStatus.cancelled;
+
+  /// Whether this swap is completed.
+  bool get isCompleted => status == SwapRequestStatus.completed;
 }

@@ -1,19 +1,20 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
+import '../config.dart';
 import '../models/conversation.dart';
+import 'b2c_auth_service.dart';
 
 /// Service for messaging API calls.
 class MessagingService {
   final String baseUrl;
 
   MessagingService({String? baseUrl})
-      : baseUrl = baseUrl ?? 'http://localhost:8000';
+      : baseUrl = baseUrl ?? AppConfig.apiBaseUrl;
 
-  /// Get authorization headers if user is signed in.
+  /// Get authorization headers — uses B2C access token when available.
   Future<Map<String, String>> _getHeaders() async {
     final headers = <String, String>{
       'Content-Type': 'application/json',
@@ -21,11 +22,10 @@ class MessagingService {
     };
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null && !kIsWeb) {
-        final idToken = await user.getIdToken();
-        if (idToken != null) {
-          headers['Authorization'] = 'Bearer $idToken';
+      if (!kIsWeb) {
+        final token = await B2CAuthService.instance.getAccessToken();
+        if (token != null) {
+          headers['Authorization'] = 'Bearer $token';
         }
       }
     } catch (_) {

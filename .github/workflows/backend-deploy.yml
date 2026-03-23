@@ -1,0 +1,90 @@
+name: Backend — Test & Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "wap-backend/**"
+      - ".github/workflows/backend-deploy.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "wap-backend/**"
+
+env:
+  APP_SERVICE_NAME: app-swapai-backend
+  RESOURCE_GROUP: otito
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  id-token: write # Required for OIDC federated auth
+  contents: read
+
+jobs:
+  # ── 1. Tests ────────────────────────────────────────────────────────────────
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: wap-backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: wap-backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pytest
+        run: pytest -v --tb=short
+        env:
+          DEBUG: "true"
+          REDIS_ENABLED: "false"
+
+  # ── 2. Deploy via ZIP to App Service ──────────────────────────────────────
+  deploy:
+    name: Deploy to App Service
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    defaults:
+      run:
+        working-directory: wap-backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Create deployment package
+        run: zip -r ../backend.zip . -x ".git/*" "__pycache__/*" "*.pyc" ".env" "tests/*"
+
+      - name: Deploy to App Service (Kudu ZIP deploy with Oryx build)
+        run: |
+          az webapp deployment source config-zip \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.APP_SERVICE_NAME }} \
+            --src ../backend.zip
+
+      - name: Smoke test
+        run: |
+          sleep 60
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            https://${{ env.APP_SERVICE_NAME }}.azurewebsites.net/healthz)
+          echo "Health check returned: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Health check failed with status $STATUS"
+            exit 1
+          fi
